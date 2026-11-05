@@ -1,0 +1,17 @@
+{
+  "name": "mytube",
+  "version": "0.1.0",
+  "description": "Phone-side remote and queue manager for YouTube on a TV/Xbox (Lounge API) with your own recommendations feed.",
+  "main": "index.js",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "functions-framework --target=mytube --port=8080",
+    "dev": "functions-framework --target=mytube --port=8080 --signature-type=http"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.2"
+  }
+}

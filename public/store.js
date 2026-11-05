@@ -1,0 +1,74 @@
+/**
+ * Persistent state, kept in the phone's browser (localStorage). The queue and
+ * the last known playback position live here so that nothing the TV does can
+ * erase them. Corrupt JSON throws on purpose; only a missing key gets its
+ * initial value.
+ */
+const KEYS = { settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos' };
+
+function load(key, initial) {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return initial;
+  return JSON.parse(raw);
+}
+function save(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function newDeviceId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+let deviceId = localStorage.getItem(KEYS.deviceId);
+if (deviceId === null) {
+  deviceId = newDeviceId();
+  localStorage.setItem(KEYS.deviceId, deviceId);
+}
+
+export const store = {
+  /** Stable id for this phone; the TV uses it to recognise the same remote across reconnects. */
+  deviceId,
+
+  settings: load(KEYS.settings, {
+    deviceName: 'MyTube Remote',
+    cookies: '',
+    screen: null, // { screenId, loungeToken, name, expiration }
+    autoConnect: true,
+  }),
+  saveSettings() {
+    save(KEYS.settings, this.settings);
+  },
+
+  /** items: [{ videoId, title, channel, duration, thumbnail }], currentIndex: -1 when nothing is current. */
+  queue: load(KEYS.queue, { items: [], currentIndex: -1 }),
+  saveQueue() {
+    save(KEYS.queue, this.queue);
+  },
+
+  /** Last playback position reported by the TV, so a lost queue can be restored where it was. */
+  lastKnown: load(KEYS.lastKnown, { videoId: null, currentTime: 0, duration: 0, at: 0 }),
+  saveLastKnown() {
+    save(KEYS.lastKnown, this.lastKnown);
+  },
+
+  /** Small cache of video metadata by id (titles for queue rows the TV added, etc.). */
+  videos: load(KEYS.videos, {}),
+  rememberVideo(v) {
+    this.videos[v.videoId] = { videoId: v.videoId, title: v.title, channel: v.channel, duration: v.duration, thumbnail: v.thumbnail };
+    const ids = Object.keys(this.videos);
+    if (ids.length > 400) for (const id of ids.slice(0, ids.length - 400)) delete this.videos[id];
+    save(KEYS.videos, this.videos);
+  },
+  video(videoId) {
+    return this.videos[videoId];
+  },
+
+  clearAll() {
+    for (const k of Object.values(KEYS)) localStorage.removeItem(k);
+  },
+};

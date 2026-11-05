@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f0f0f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>MyTube</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-text">MyTube</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="iconbtn" id="btn-refresh" aria-label="Refresh" title="Refresh"></button>
+      <button class="tvchip" id="tvchip" aria-label="TV connection"><span class="dot"></span><span class="label">No TV</span></button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="view" id="view-home">
+      <div class="notice" id="feed-notice" hidden></div>
+      <div class="list" id="feed-list"></div>
+      <div class="sentinel" id="feed-sentinel"></div>
+      <div class="loading" id="feed-loading" hidden><span class="spinner"></span></div>
+    </section>
+
+    <section class="view" id="view-search" hidden>
+      <form class="searchbar" id="search-form" role="search">
+        <input id="search-input" type="search" placeholder="Search YouTube" autocomplete="off" enterkeyhint="search">
+        <button type="submit" class="iconbtn" aria-label="Search"></button>
+      </form>
+      <div class="list" id="search-list"></div>
+      <div class="sentinel" id="search-sentinel"></div>
+      <div class="loading" id="search-loading" hidden><span class="spinner"></span></div>
+    </section>
+
+    <section class="view" id="view-queue" hidden>
+      <div class="section-head">
+        <h2>Queue</h2>
+        <div class="row gap">
+          <button class="btn ghost small" id="btn-queue-push" hidden>Push to TV</button>
+          <button class="btn ghost small danger" id="btn-queue-clear">Clear</button>
+        </div>
+      </div>
+      <div class="notice" id="queue-notice" hidden></div>
+      <div class="qlist" id="queue-list"></div>
+      <p class="empty" id="queue-empty">Your queue is empty. Tap any video and choose <b>Add to queue</b>.</p>
+    </section>
+
+    <section class="view" id="view-tv" hidden></section>
+  </main>
+
+  <div class="mini" id="mini" hidden>
+    <img class="mini-thumb" id="mini-thumb" alt="">
+    <div class="mini-text">
+      <div class="mini-title" id="mini-title"></div>
+      <div class="mini-sub" id="mini-sub"></div>
+    </div>
+    <button class="iconbtn" id="mini-play" aria-label="Play or pause"></button>
+    <button class="iconbtn" id="mini-next" aria-label="Next"></button>
+    <div class="mini-progress"><div id="mini-bar"></div></div>
+  </div>
+
+  <nav class="bottomnav">
+    <button class="navbtn active" data-view="home"><span class="ico" data-icon="home"></span><span>Home</span></button>
+    <button class="navbtn" data-view="search"><span class="ico" data-icon="search"></span><span>Search</span></button>
+    <button class="navbtn" data-view="queue"><span class="ico" data-icon="queue"></span><span>Queue</span><span class="badge" id="queue-badge" hidden></span></button>
+    <button class="navbtn" data-view="tv"><span class="ico" data-icon="tv"></span><span>TV</span></button>
+  </nav>
+
+  <!-- Now playing (full-screen sheet) -->
+  <section class="np" id="np" hidden>
+    <div class="np-head">
+      <button class="iconbtn" id="np-close" aria-label="Collapse"></button>
+      <div class="np-screen" id="np-screen">Playing on TV</div>
+      <button class="iconbtn" id="np-more" aria-label="More" hidden></button>
+    </div>
+    <div class="np-art">
+      <img id="np-thumb" alt="">
+      <div class="np-ad" id="np-ad" hidden>
+        <div class="np-ad-text"><b>Ad playing</b><span id="np-ad-sub"></span></div>
+        <button class="btn skip" id="np-skip">Skip Ad</button>
+      </div>
+      <div class="np-state" id="np-state"></div>
+    </div>
+    <div class="np-meta">
+      <div class="np-title" id="np-title">Nothing playing</div>
+      <div class="np-sub" id="np-sub"></div>
+    </div>
+    <div class="scrub" id="scrub">
+      <div class="scrub-track" id="scrub-track"></div>
+      <div class="scrub-fill" id="scrub-fill"></div>
+      <div class="scrub-knob" id="scrub-knob"></div>
+      <input type="range" id="scrub-range" min="0" max="1000" value="0" step="1" aria-label="Seek">
+    </div>
+    <div class="np-times"><span id="np-cur">0:00</span><span id="np-chapter"></span><span id="np-dur">0:00</span></div>
+    <div class="np-controls">
+      <button class="iconbtn big" id="np-prev" aria-label="Previous"></button>
+      <button class="iconbtn big" id="np-back" aria-label="Back 10 seconds"></button>
+      <button class="iconbtn huge" id="np-play" aria-label="Play or pause"></button>
+      <button class="iconbtn big" id="np-fwd" aria-label="Forward 10 seconds"></button>
+      <button class="iconbtn big" id="np-next" aria-label="Next"></button>
+    </div>
+    <div class="np-row">
+      <label class="toggle"><input type="checkbox" id="np-autoplay"><span></span>Autoplay</label>
+      <button class="btn ghost small" id="np-start" hidden>Start queue on TV</button>
+    </div>
+    <div class="tabs" id="np-tabs">
+      <button class="tab active" data-tab="queue">Up next</button>
+      <button class="tab" data-tab="related">Related</button>
+      <button class="tab" data-tab="chapters">Chapters</button>
+    </div>
+    <div class="np-body">
+      <div class="qlist" id="np-queue"></div>
+      <div class="list compact" id="np-related" hidden></div>
+      <div class="chapters" id="np-chapters" hidden></div>
+      <div class="loading" id="np-loading" hidden><span class="spinner"></span></div>
+    </div>
+  </section>
+
+  <!-- Tap-a-video action sheet -->
+  <div class="backdrop" id="sheet-backdrop" hidden></div>
+  <section class="sheet" id="sheet" hidden>
+    <div class="sheet-video">
+      <img id="sheet-thumb" alt="">
+      <div>
+        <div class="sheet-title" id="sheet-title"></div>
+        <div class="sheet-sub" id="sheet-sub"></div>
+      </div>
+    </div>
+    <button class="btn action" id="sheet-playnow"><span class="ico" data-icon="play"></span>Play now</button>
+    <button class="btn action" id="sheet-playnext"><span class="ico" data-icon="playnext"></span>Play next</button>
+    <button class="btn action" id="sheet-addqueue"><span class="ico" data-icon="addqueue"></span>Add to queue</button>
+    <button class="btn ghost" id="sheet-cancel">Cancel</button>
+  </section>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script>
+    // A crash while loading (for example corrupt saved data) must be visible, not a blank page.
+    window.addEventListener('error', (e) => {
+      const box = document.createElement('pre');
+      box.style.cssText = 'position:fixed;left:8px;right:8px;bottom:80px;z-index:99;padding:12px;background:#3a0f0f;color:#ffb4b4;border-radius:8px;white-space:pre-wrap;font:12px/1.4 monospace';
+      box.textContent = 'MyTube failed: ' + (e.error && e.error.stack ? e.error.stack : e.message) + '\n\nIf this keeps happening, open the TV tab → "Clear all app data" (or clear site data in Chrome).';
+      document.body.append(box);
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const box = document.createElement('pre');
+      box.style.cssText = 'position:fixed;left:8px;right:8px;bottom:80px;z-index:99;padding:12px;background:#3a0f0f;color:#ffb4b4;border-radius:8px;white-space:pre-wrap;font:12px/1.4 monospace';
+      box.textContent = 'Unhandled error: ' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason));
+      document.body.append(box);
+    });
+  </script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
