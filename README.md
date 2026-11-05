@@ -156,7 +156,12 @@ Local run: `npm install && npm start` → http://localhost:8080.
 1. **TV tab** → on the Xbox open YouTube → Settings → *Link with TV code* →
    type the 12 digits → **Link TV**. The code is only needed once; the token
    refreshes itself (YouTube issues ~13-day tokens).
-2. **TV tab → Your YouTube account** → paste cookies → **Save & test**.
+2. **TV tab → Your YouTube account**. From the phone alone: install Firefox
+   for Android, add the Cookie-Editor extension, sign in on youtube.com in
+   Firefox, Cookie-Editor → Export (copies to the clipboard), then in MyTube
+   **Paste from clipboard** → **Save & test**, and close the YouTube tab in
+   Firefox. JSON, cookies.txt and header formats are all accepted.
+   Desktop alternative:
    Export them on a desktop browser with a "cookies.txt" extension (e.g.
    *Get cookies.txt LOCALLY*) **from a fresh private window** that you then
    close without signing out. YouTube rotates cookies in any open tab, which
