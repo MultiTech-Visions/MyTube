@@ -151,6 +151,16 @@ with its stack).
 
 Local run: `npm install && npm start` → http://localhost:8080.
 
+### Keep it fast: minimum instances = 1
+
+Every button press is phone → Cloud Run → YouTube → Xbox. YouTube's part is
+about 150 ms. A cold Cloud Run instance adds seconds, so set **Minimum number
+of instances = 1** on the service (Edit & deploy new revision → Revision
+scaling), and pick the region closest to you. Billing stays request-based, so
+an idle instance costs very little. The debug log prints each command's round
+trip (`cmd seekTo ok (180 ms …)`); a number in the seconds there means the
+instance, not the app.
+
 ## First use on the phone
 
 1. **TV tab** → on the Xbox open YouTube → Settings → *Link with TV code* →

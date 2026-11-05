@@ -735,8 +735,8 @@ $('#np-close').addEventListener('click', closeNowPlaying);
 $('#np-play').addEventListener('click', guard(togglePlay));
 $('#np-prev').addEventListener('click', guard(() => remote.previous()));
 $('#np-next').addEventListener('click', guard(() => remote.next()));
-$('#np-back').addEventListener('click', guard(() => remote.seekTo(remote.estimatedTime() - 10)));
-$('#np-fwd').addEventListener('click', guard(() => remote.seekTo(remote.estimatedTime() + 10)));
+$('#np-back').addEventListener('click', guard(() => remote.seekBy(-10)));
+$('#np-fwd').addEventListener('click', guard(() => remote.seekBy(10)));
 $('#np-skip').addEventListener('click', guard(() => remote.skipAd()));
 $('#np-dodge').addEventListener('click', guard(() => dodgeAd('button')));
 

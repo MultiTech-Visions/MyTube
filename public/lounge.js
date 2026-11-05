@@ -48,6 +48,10 @@ export class Remote extends EventTarget {
 
     this._generation = 0;
     this._loopId = 0;
+    /** Optimistic seek: { target, until } — stale TV reports are ignored until the TV catches up. */
+    this._seekHold = null;
+    this._seekInFlight = false;
+    this._seekNext = null;
     this._streamAbort = null;
     this._chain = Promise.resolve();
   }
@@ -291,11 +295,20 @@ export class Remote extends EventTarget {
 
   /** Sends one command; commands are serialised so the TV sees them in order. */
   send(name, params = {}) {
+    if (name === 'play' || name === 'pause' || name === 'skipAd' || name === 'next' || name === 'previous') return this._sendNow(name, params);
     const run = () => this._send(name, params, true);
     const p = this._chain.then(run, run);
     const spacing = name === 'addVideo' || name === 'insertVideo' || name === 'removeVideo' || name === 'setPlaylist' ? 1200 : 0;
     this._chain = p.then(() => new Promise((r) => setTimeout(r, spacing)), () => {});
     return p;
+  }
+
+  /**
+   * Playback controls do not wait behind queue spacing. They still get their
+   * RID/ofs synchronously at call time, so ordering on the wire stays correct.
+   */
+  _sendNow(name, params = {}) {
+    return this._send(name, params, true);
   }
 
   async _send(name, params, allowRecover) {
@@ -356,10 +369,30 @@ export class Remote extends EventTarget {
     return this.send('removeVideo', { videoId });
   }
   play() {
+    this._optimistic({ state: PLAYER_STATE.PLAYING });
     return this.send('play');
   }
   pause() {
+    this.player.currentTime = this.estimatedTime();
+    this._optimistic({ state: PLAYER_STATE.PAUSED });
     return this.send('pause');
+  }
+
+  /** Applies a local state change right away so the UI responds before the TV confirms. */
+  _optimistic(patch) {
+    Object.assign(this.player, patch, { updatedAt: Date.now() });
+    this._emit('player');
+  }
+
+  /** Where the playhead is heading: the pending seek target if one is in flight, else the estimate. */
+  seekBase() {
+    if (this._seekHold && Date.now() < this._seekHold.until) return this._seekHold.target;
+    return this.estimatedTime();
+  }
+
+  /** Relative seek (+10 / -10). Taps accumulate from the pending target, not from a stale estimate. */
+  seekBy(delta) {
+    return this.seekTo(this.seekBase() + delta);
   }
   next() {
     return this.send('next');
@@ -367,8 +400,34 @@ export class Remote extends EventTarget {
   previous() {
     return this.send('previous');
   }
+  /**
+   * Absolute seek. The bar jumps immediately; the command goes out at once,
+   * and taps made while it is in flight collapse into one follow-up seek to the
+   * latest target, so rapid taps never queue up behind each other.
+   */
   seekTo(seconds) {
-    return this.send('seekTo', { newTime: Math.max(0, Math.floor(seconds)) });
+    const max = this.player.duration > 0 ? this.player.duration - 1 : Infinity;
+    const target = Math.max(0, Math.min(max, seconds));
+    this._seekHold = { target, until: Date.now() + 4000 };
+    this._optimistic({ currentTime: target });
+    if (this._seekInFlight) {
+      this._seekNext = target;
+      return Promise.resolve();
+    }
+    return this._fireSeek(target);
+  }
+  async _fireSeek(target) {
+    this._seekInFlight = true;
+    try {
+      await this._sendNow('seekTo', { newTime: Math.floor(target) });
+    } finally {
+      this._seekInFlight = false;
+    }
+    if (this._seekNext !== null) {
+      const next = this._seekNext;
+      this._seekNext = null;
+      if (Math.floor(next) !== Math.floor(target)) await this._fireSeek(next);
+    }
   }
   skipAd() {
     return this.send('skipAd');
@@ -409,8 +468,9 @@ export class Remote extends EventTarget {
         return;
       case 'nowPlaying': {
         if (typeof p.videoId === 'string' && p.videoId) {
+          const sameVideo = pl.videoId === p.videoId;
           pl.videoId = p.videoId;
-          pl.currentTime = num(p.currentTime);
+          if (!(sameVideo && this._holdsSeek(num(p.currentTime)))) pl.currentTime = num(p.currentTime);
           pl.duration = num(p.duration);
           pl.state = p.state === undefined ? pl.state : num(p.state);
           pl.listId = typeof p.listId === 'string' ? p.listId : pl.listId;
@@ -430,6 +490,11 @@ export class Remote extends EventTarget {
         return;
       }
       case 'onStateChange': {
+        if (this._holdsSeek(num(p.currentTime))) {
+          pl.state = num(p.state);
+          this._emit('player');
+          return;
+        }
         pl.currentTime = num(p.currentTime);
         pl.duration = num(p.duration);
         pl.state = num(p.state);
@@ -510,6 +575,17 @@ export class Remote extends EventTarget {
         // onSubtitlesTrackChanged, onPlaylistModeChanged, onVideoQualityChanged, remoteConnected, ...
         return;
     }
+  }
+
+  /** True while a just-sent seek has not been confirmed and this report still shows the old position. */
+  _holdsSeek(reported) {
+    const h = this._seekHold;
+    if (!h) return false;
+    if (Date.now() > h.until || Math.abs(reported - h.target) < 2.5) {
+      this._seekHold = null; // confirmed (or gave up waiting)
+      return false;
+    }
+    return true;
   }
 
   _adFromState(state) {

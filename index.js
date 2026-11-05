@@ -192,7 +192,10 @@ async function api(req, res) {
       if (!body.session || typeof body.session !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.session is required');
       const session = sessionFrom(body.session, { needChannel: true });
       if (!Number.isInteger(session.ofs)) throw new HttpError(400, 'BAD_REQUEST', 'session.ofs must be an integer');
-      return sendJson(res, 200, await lounge.sendCommands(session, body.commands));
+      const started = Date.now();
+      const result = await lounge.sendCommands(session, body.commands);
+      res.set('Server-Timing', `youtube;dur=${Date.now() - started}`);
+      return sendJson(res, 200, result);
     }
     case 'GET /api/lounge/events': {
       const session = sessionFrom(req.query, { needChannel: true });
