@@ -151,12 +151,27 @@ with its stack).
 
 Local run: `npm install && npm start` → http://localhost:8080.
 
+### Keep it fast: minimum instances = 1
+
+Every button press is phone → Cloud Run → YouTube → Xbox. YouTube's part is
+about 150 ms. A cold Cloud Run instance adds seconds, so set **Minimum number
+of instances = 1** on the service (Edit & deploy new revision → Revision
+scaling), and pick the region closest to you. Billing stays request-based, so
+an idle instance costs very little. The debug log prints each command's round
+trip (`cmd seekTo ok (180 ms …)`); a number in the seconds there means the
+instance, not the app.
+
 ## First use on the phone
 
 1. **TV tab** → on the Xbox open YouTube → Settings → *Link with TV code* →
    type the 12 digits → **Link TV**. The code is only needed once; the token
    refreshes itself (YouTube issues ~13-day tokens).
-2. **TV tab → Your YouTube account** → paste cookies → **Save & test**.
+2. **TV tab → Your YouTube account**. From the phone alone: install Firefox
+   for Android, add the Cookie-Editor extension, sign in on youtube.com in
+   Firefox, Cookie-Editor → Export (copies to the clipboard), then in MyTube
+   **Paste from clipboard** → **Save & test**, and close the YouTube tab in
+   Firefox. JSON, cookies.txt and header formats are all accepted.
+   Desktop alternative:
    Export them on a desktop browser with a "cookies.txt" extension (e.g.
    *Get cookies.txt LOCALLY*) **from a fresh private window** that you then
    close without signing out. YouTube rotates cookies in any open tab, which

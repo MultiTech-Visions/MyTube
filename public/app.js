@@ -735,8 +735,8 @@ $('#np-close').addEventListener('click', closeNowPlaying);
 $('#np-play').addEventListener('click', guard(togglePlay));
 $('#np-prev').addEventListener('click', guard(() => remote.previous()));
 $('#np-next').addEventListener('click', guard(() => remote.next()));
-$('#np-back').addEventListener('click', guard(() => remote.seekTo(remote.estimatedTime() - 10)));
-$('#np-fwd').addEventListener('click', guard(() => remote.seekTo(remote.estimatedTime() + 10)));
+$('#np-back').addEventListener('click', guard(() => remote.seekBy(-10)));
+$('#np-fwd').addEventListener('click', guard(() => remote.seekBy(10)));
 $('#np-skip').addEventListener('click', guard(() => remote.skipAd()));
 $('#np-dodge').addEventListener('click', guard(() => dodgeAd('button')));
 
@@ -1487,10 +1487,19 @@ function renderTvView() {
   panels.push(
     el('div', { class: 'panel' },
       el('h3', {}, 'Your YouTube account'),
-      el('p', {}, 'Your Home recommendations come from your account. Paste your youtube.com cookies (exported from a desktop browser with a "cookies.txt" extension, from a fresh private window that you then close without signing out). They stay in this phone\'s browser and are only sent to your own MyTube server.'),
+      el('p', {}, 'Your recommendations, history and playlists come from your account. Get your youtube.com cookies on this phone:'),
+      el('ol', { class: 'steps' },
+        el('li', {}, 'Install ', el('b', {}, 'Firefox'), ' from the Play Store, then add the ', el('b', {}, 'Cookie-Editor'), ' extension (Firefox menu → Extensions).'),
+        el('li', {}, 'In Firefox open ', el('b', {}, 'youtube.com'), ' and sign in.'),
+        el('li', {}, 'Open Cookie-Editor → ', el('b', {}, 'Export'), '. It copies the cookies to the clipboard.'),
+        el('li', {}, 'Come back here and tap ', el('b', {}, 'Paste from clipboard'), ', then ', el('b', {}, 'Save & test'), '.'),
+        el('li', {}, 'Then stop using YouTube in Firefox: close the tab. YouTube rotates cookies in any open tab, which would invalidate this copy.')
+      ),
+      el('p', {}, 'JSON, cookies.txt and plain "a=b; c=d" formats all work. Cookies stay in this phone\'s browser and only go to your own MyTube server.'),
       el('p', { class: ui.feed.signedIn === true ? 'ok' : ui.feed.signedIn === false && s.cookies ? 'bad' : '' }, ui.feed.signedIn === true ? 'Status: personalised feed is working.' : ui.feed.signedIn === false && s.cookies ? 'Status: cookies saved but YouTube says signed out. Export a fresh set.' : s.cookies ? 'Status: cookies saved, not tested yet.' : 'Status: no cookies — anonymous mode (Search works, Home is empty).'),
       ta,
       el('div', { class: 'row' },
+        el('button', { class: 'btn ghost', onclick: guard(async () => { ta.value = await navigator.clipboard.readText(); if (!ta.value.trim()) throw new Error('The clipboard is empty'); toast(`Pasted ${ta.value.length} characters`); }) }, 'Paste from clipboard'),
         el('button', { class: 'btn primary', onclick: guard(async () => { s.cookies = ta.value.trim(); store.saveSettings(); ui.feed.loaded = false; await loadFeed(true); toast(ui.feed.signedIn ? 'Signed in — feed loaded' : 'Saved, but YouTube still sees you as signed out', { error: !ui.feed.signedIn }); renderTvView(); }) }, 'Save & test'),
         el('button', { class: 'btn ghost', onclick: () => { ta.value = ''; s.cookies = ''; store.saveSettings(); ui.feed.loaded = false; renderTvView(); } }, 'Remove')
       )
