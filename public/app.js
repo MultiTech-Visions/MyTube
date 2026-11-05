@@ -6,8 +6,8 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
-import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist } from './api.js';
-import { store } from './store.js';
+import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist, sponsorSegments as apiSponsorSegments } from './api.js';
+import { store, AD_DEFAULTS } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
 import { icon } from './icons.js';
 import * as debug from './debug.js';
@@ -712,6 +712,106 @@ $('#np-next').addEventListener('click', guard(() => remote.next()));
 $('#np-back').addEventListener('click', guard(() => remote.seekTo(remote.estimatedTime() - 10)));
 $('#np-fwd').addEventListener('click', guard(() => remote.seekTo(remote.estimatedTime() + 10)));
 $('#np-skip').addEventListener('click', guard(() => remote.skipAd()));
+$('#np-dodge').addEventListener('click', guard(() => dodgeAd('button')));
+
+// ---------------------------------------------------------------------------
+// Ad strategies: auto-skip, dodge (exit + reload), mute, SponsorBlock
+// ---------------------------------------------------------------------------
+const adRun = { videoId: null, dodges: 0, muted: false, busy: false, autoSkipped: 0 };
+const ADS = () => store.settings.ads;
+
+function adStatusText() {
+  const s = ADS();
+  const parts = [];
+  parts.push(s.autoSkip ? 'auto-skip on' : 'auto-skip off');
+  if (s.dodge) parts.push(`dodge ${adRun.dodges}/${s.dodgeMax}`);
+  if (adRun.muted) parts.push('muted');
+  return parts.join(' · ');
+}
+
+function resetAdRun(videoId) {
+  if (adRun.videoId === videoId) return;
+  adRun.videoId = videoId;
+  adRun.dodges = 0;
+  adRun.autoSkipped = 0;
+}
+
+remote.addEventListener('ad', (e) => {
+  const phase = e.detail.phase;
+  const s = ADS();
+  resetAdRun(remote.player.videoId);
+  debug.log('app', `ad ${phase}`, { ad: remote.ad, dodges: adRun.dodges, settings: s });
+  if (phase === 'start') {
+    if (s.muteAds && !adRun.muted) {
+      remote.mute().then(() => { adRun.muted = true; }).catch(showError);
+    }
+    if (s.dodge && adRun.dodges < s.dodgeMax && !adRun.busy) dodgeAd('auto').catch(showError);
+  } else if (phase === 'skippable') {
+    if (s.autoSkip) {
+      adRun.autoSkipped += 1;
+      remote.skipAd().then(() => toast('Ad skipped automatically')).catch(showError);
+    }
+  } else if (phase === 'end') {
+    if (adRun.muted) {
+      remote.unMute().then(() => { adRun.muted = false; }).catch(showError);
+    }
+  }
+  if (ui.npOpen) renderNowPlaying();
+});
+
+/**
+ * Your manual trick, automated: leave the player (stopVideo), then load the
+ * same video again at the position it was at. YouTube usually treats that as
+ * a fresh load whose ad decision has already been spent.
+ */
+async function dodgeAd(trigger) {
+  if (!remote.connected) throw new Error('Not connected to the TV');
+  if (Q.currentIndex < 0 || !Q.items[Q.currentIndex]) throw new Error('Dodge needs the queue to be playing from this phone (use Play now first)');
+  if (adRun.busy) return;
+  const s = ADS();
+  adRun.busy = true;
+  adRun.dodges += 1;
+  const index = Q.currentIndex;
+  const position = Math.max(0, resumeTimeFor(index) + (resumeTimeFor(index) > 0 ? s.dodgeOffset : 0));
+  debug.log('app', `ad dodge #${adRun.dodges} (${trigger}): stopVideo, then reload #${index + 1} at ${Math.floor(position)}s`, { lastKnown: store.lastKnown });
+  try {
+    await remote.stopVideo();
+    await new Promise((r) => setTimeout(r, 1500));
+    await pushQueue(index, position);
+    toast(`Reloaded to dodge the ad (${adRun.dodges}/${s.dodgeMax})`);
+  } finally {
+    adRun.busy = false;
+    if (ui.npOpen) renderNowPlaying();
+  }
+}
+
+// --- SponsorBlock ---------------------------------------------------------
+const sb = { videoId: null, segments: [], skipped: new Set() };
+async function loadSponsorSegments(videoId) {
+  sb.videoId = videoId;
+  sb.segments = [];
+  sb.skipped = new Set();
+  const res = await apiSponsorSegments(videoId);
+  if (sb.videoId !== videoId) return;
+  sb.segments = res.segments;
+  debug.log('app', `SponsorBlock: ${res.segments.length} segments for ${videoId}`, res.segments.map((x) => `${x.category} ${Math.floor(x.start)}-${Math.floor(x.end)}`));
+  if (ui.npOpen) renderChapterSegments();
+}
+function activeSponsorSegments() {
+  const cats = ADS().sponsorCategories;
+  return sb.segments.filter((x) => cats.includes(x.category));
+}
+function sponsorTick() {
+  if (!ADS().sponsorBlock || !remote.connected || remote.ad.active) return;
+  const pl = remote.player;
+  if (!pl.videoId || pl.videoId !== sb.videoId || pl.state !== PLAYER_STATE.PLAYING) return;
+  const t = remote.estimatedTime();
+  const seg = activeSponsorSegments().find((x) => t >= x.start && t < x.end - 1 && !sb.skipped.has(x.uuid));
+  if (!seg) return;
+  sb.skipped.add(seg.uuid);
+  debug.log('app', `SponsorBlock: skipping ${seg.category} ${Math.floor(seg.start)}→${Math.floor(seg.end)} (at ${Math.floor(t)}s)`);
+  remote.seekTo(seg.end).then(() => toast(`Skipped ${seg.category} (${Math.round(seg.end - seg.start)}s)`)).catch(showError);
+}
 $('#np-autoplay').addEventListener('change', guard((e) => remote.setAutoplay(e.target.checked)));
 $('#np-start').addEventListener('click', guard(() => { const s = Math.max(0, Math.min(Q.currentIndex, Q.items.length - 1)); return pushQueue(s, resumeTimeFor(s)); }));
 for (const t of document.querySelectorAll('#np-tabs .tab')) {
@@ -771,6 +871,8 @@ function renderNowPlaying() {
   $('#np-ad').hidden = !remote.ad.active;
   $('#np-skip').disabled = !remote.ad.skipEnabled;
   $('#np-ad-sub').textContent = remote.ad.skipEnabled ? (remote.ad.title ? remote.ad.title : 'Skip is available') : 'Skip becomes available in a few seconds';
+  $('#np-dodge').disabled = adRun.busy || Q.currentIndex < 0;
+  $('#np-ad-status').textContent = adStatusText();
   $('#np-autoplay').checked = pl.autoplayMode === 'ENABLED';
   $('#np-start').hidden = !(remote.connected && !vid && Q.items.length > 0);
   for (const b of ['#np-prev', '#np-next', '#np-back', '#np-fwd']) $(b).disabled = !remote.connected || !vid;
@@ -784,11 +886,14 @@ function renderChapterSegments() {
   const track = $('#scrub-track');
   const d = remote.player.duration;
   const chapters = ui.watch.data && ui.watch.videoId === remote.player.videoId ? ui.watch.data.chapters : [];
+  const marks = ADS().sponsorBlock && sb.videoId === remote.player.videoId && d > 0
+    ? activeSponsorSegments().map((x) => el('div', { class: 'sb', title: x.category, style: `left:${(x.start / d) * 100}%;width:${Math.max(0.5, ((x.end - x.start) / d) * 100)}%` }))
+    : [];
   if (!(d > 0) || chapters.length < 2) {
-    track.replaceChildren();
+    track.replaceChildren(...marks);
     return;
   }
-  track.replaceChildren(...chapters.slice(1).map((c) => el('div', { class: 'gap', style: `left:${(c.start / d) * 100}%` })));
+  track.replaceChildren(...marks, ...chapters.slice(1).map((c) => el('div', { class: 'gap', style: `left:${(c.start / d) * 100}%` })));
 }
 
 function renderNpTabs() {
@@ -1185,9 +1290,11 @@ remote.addEventListener('player', () => {
     lastVideoId = pl.videoId;
     ui.comments = null;
     ui.descOpen = false;
+    resetAdRun(pl.videoId);
     if (pl.videoId) {
       syncCurrentFromTv();
       loadWatch(pl.videoId).catch(showError);
+      if (ADS().sponsorBlock) loadSponsorSegments(pl.videoId).catch(showError);
     }
   }
   rememberPosition();
@@ -1199,6 +1306,7 @@ remote.addEventListener('player', () => {
 // Smooth playhead while playing.
 setInterval(() => {
   if (!remote.connected || !remote.player.videoId) return;
+  sponsorTick();
   if (ui.npOpen && !ui.scrubbing) paintScrub(remote.estimatedTime());
   else $('#mini-bar').style.width = `${remote.player.duration > 0 ? (remote.estimatedTime() / remote.player.duration) * 100 : 0}%`;
   if (Date.now() % 10000 < 1000) rememberPosition();
@@ -1232,6 +1340,9 @@ function debugContext() {
     owned: ui.owned,
     stale: ui.stale,
     lastKnown: store.lastKnown,
+    adSettings: store.settings.ads,
+    adRun,
+    sponsorSegments: sb.segments.length,
   };
 }
 function openDebug() {
@@ -1329,6 +1440,29 @@ function renderTvView() {
         el('button', { class: 'btn primary', onclick: guard(async () => { s.cookies = ta.value.trim(); store.saveSettings(); ui.feed.loaded = false; await loadFeed(true); toast(ui.feed.signedIn ? 'Signed in — feed loaded' : 'Saved, but YouTube still sees you as signed out', { error: !ui.feed.signedIn }); renderTvView(); }) }, 'Save & test'),
         el('button', { class: 'btn ghost', onclick: () => { ta.value = ''; s.cookies = ''; store.saveSettings(); ui.feed.loaded = false; renderTvView(); } }, 'Remove')
       )
+    )
+  );
+
+  // --- Ads
+  const ads = s.ads;
+  const row = (key, label, hint) =>
+    el('div', { class: 'setting-row' },
+      el('div', { class: 'setting-text' }, label, el('small', {}, hint)),
+      el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: ads[key], onchange: (e) => { ads[key] = e.target.checked; store.saveSettings(); debug.log('app', `setting ads.${key} = ${ads[key]}`); if (key === 'sponsorBlock' && ads[key] && remote.player.videoId) loadSponsorSegments(remote.player.videoId).catch(showError); } }), el('span'))
+    );
+  const dodgeMax = el('select', { onchange: (e) => { ads.dodgeMax = Number(e.target.value); store.saveSettings(); } }, ...[1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeMax === n }, String(n))));
+  const cats = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic'];
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Ads'),
+      row('autoSkip', 'Skip ads automatically', 'Sends Skip the instant the TV reports the skip button is enabled.'),
+      row('dodge', 'Dodge ads by exiting and reloading', 'Your trick: on ad start, leave the player and reload the video at the saved position (+2 s past a mid-roll cue).'),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then fall back to skipping.')), dodgeMax),
+      row('muteAds', 'Mute during ads', 'mute on ad start, unMute when it ends. The Xbox may ignore app-level mute; the log will show.'),
+      row('sponsorBlock', 'Skip sponsor segments (SponsorBlock)', 'Seeks past community-marked segments. Purple marks on the progress bar.'),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'SponsorBlock categories'),
+        el('div', { class: 'row', style: 'margin:0; justify-content:flex-end' }, ...cats.map((c) => el('label', { class: 'chip', style: `height:28px;font-size:12px;${ads.sponsorCategories.includes(c) ? 'background:#fff;color:#000' : ''}` }, el('input', { type: 'checkbox', style: 'display:none', checked: ads.sponsorCategories.includes(c), onchange: (e) => { ads.sponsorCategories = e.target.checked ? [...ads.sponsorCategories, c] : ads.sponsorCategories.filter((x) => x !== c); store.saveSettings(); renderTvView(); } }), c)))),
+      el('p', {}, `Defaults: ${Object.entries(AD_DEFAULTS).filter(([k]) => typeof AD_DEFAULTS[k] === 'boolean').map(([k, v]) => `${k} ${v ? 'on' : 'off'}`).join(', ')}.`)
     )
   );
 

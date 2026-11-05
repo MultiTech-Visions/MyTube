@@ -10,6 +10,7 @@
  *   'player'   player state changed            (read remote.player / remote.ad)
  *   'tvqueue'  the TV reported its playlist    (read remote.tvQueue)
  *   'devices'  loungeStatus arrived            (read remote.screenName)
+ *   'ad'       ad phase changed                { phase: 'start' | 'skippable' | 'end' }
  *   'error'    a recoverable error happened    { error }
  */
 import { api, ApiError } from './api.js';
@@ -362,6 +363,15 @@ export class Remote extends EventTarget {
   skipAd() {
     return this.send('skipAd');
   }
+  stopVideo() {
+    return this.send('stopVideo');
+  }
+  mute() {
+    return this.send('mute');
+  }
+  unMute() {
+    return this.send('unMute');
+  }
   setAutoplay(enabled) {
     return this.send('setAutoplayMode', { autoplayMode: enabled ? 'ENABLED' : 'DISABLED' });
   }
@@ -426,15 +436,15 @@ export class Remote extends EventTarget {
         return;
       }
       case 'adPlaying': {
-        this.ad = { active: true, skipEnabled: p.isSkipEnabled === 'true', title: typeof p.adTitle === 'string' ? p.adTitle : '' };
+        this._setAd({ active: true, skipEnabled: p.isSkipEnabled === 'true', title: typeof p.adTitle === 'string' ? p.adTitle : this.ad.title });
         this._emit('player');
         return;
       }
       case 'onAdStateChange': {
-        this.ad = { ...this.ad, active: true, skipEnabled: p.isSkipEnabled === 'true' };
-        if (p.currentTime !== undefined) {
-          pl.updatedAt = Date.now();
-        }
+        // adState "0" is YouTube telling us the ad finished; anything else means an ad is up.
+        const over = p.adState === '0' || p.adState === 'AD_STATE_NONE';
+        this._setAd({ active: !over, skipEnabled: !over && p.isSkipEnabled === 'true', title: this.ad.title });
+        if (p.currentTime !== undefined) pl.updatedAt = Date.now();
         this._emit('player');
         return;
       }
@@ -479,10 +489,19 @@ export class Remote extends EventTarget {
 
   _adFromState(state) {
     if (state === PLAYER_STATE.AD) {
-      if (!this.ad.active) this.ad = { active: true, skipEnabled: false, title: '' };
+      if (!this.ad.active) this._setAd({ active: true, skipEnabled: false, title: '' });
     } else if (state === PLAYER_STATE.AD_SKIPPED || state === PLAYER_STATE.PLAYING || state === PLAYER_STATE.PAUSED || state === PLAYER_STATE.ENDED || state === PLAYER_STATE.STOPPED) {
-      if (this.ad.active) this.ad = { active: false, skipEnabled: false, title: '' };
+      if (this.ad.active) this._setAd({ active: false, skipEnabled: false, title: '' });
     }
+  }
+
+  /** Single place where ad state changes, so phase transitions are announced exactly once. */
+  _setAd(next) {
+    const prev = this.ad;
+    this.ad = next;
+    if (!prev.active && next.active) this._emit('ad', { phase: 'start' });
+    if (next.active && !prev.skipEnabled && next.skipEnabled) this._emit('ad', { phase: 'skippable' });
+    if (prev.active && !next.active) this._emit('ad', { phase: 'end' });
   }
 
   /** Estimated playhead now, interpolated while playing. */

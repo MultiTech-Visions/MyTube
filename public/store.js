@@ -30,6 +30,17 @@ if (deviceId === null) {
   localStorage.setItem(KEYS.deviceId, deviceId);
 }
 
+/** Ad strategies. Settings saved before this existed get the defaults once, explicitly. */
+export const AD_DEFAULTS = {
+  autoSkip: true, // send skipAd the moment the TV says the skip button is enabled
+  dodge: false, // on ad start: stopVideo, then reload the video at the saved position
+  dodgeMax: 2, // give up after this many reloads for one video
+  dodgeOffset: 2, // seconds to land past the position where the ad hit (clears mid-roll cue points)
+  muteAds: false, // mute the TV while an ad plays, unmute after
+  sponsorBlock: false, // seek past community-marked sponsor segments (SponsorBlock)
+  sponsorCategories: ['sponsor', 'selfpromo', 'interaction'], // which SponsorBlock categories to skip
+};
+
 export const store = {
   /** Stable id for this phone; the TV uses it to recognise the same remote across reconnects. */
   deviceId,
@@ -39,6 +50,7 @@ export const store = {
     cookies: '',
     screen: null, // { screenId, loungeToken, name, expiration }
     autoConnect: true,
+    ads: null, // filled in below
   }),
   saveSettings() {
     save(KEYS.settings, this.settings);
@@ -72,3 +84,18 @@ export const store = {
     for (const k of Object.values(KEYS)) localStorage.removeItem(k);
   },
 };
+
+if (store.settings.ads === null || store.settings.ads === undefined) {
+  store.settings.ads = { ...AD_DEFAULTS };
+  store.saveSettings();
+} else {
+  // A setting added in a later version gets its default once; existing choices are kept.
+  let changed = false;
+  for (const [k, v] of Object.entries(AD_DEFAULTS)) {
+    if (!(k in store.settings.ads)) {
+      store.settings.ads[k] = Array.isArray(v) ? [...v] : v;
+      changed = true;
+    }
+  }
+  if (changed) store.saveSettings();
+}

@@ -63,3 +63,4 @@ export const rate = (videoId, rating) => api('/api/rate', { method: 'POST', body
 export const saveOptions = (videoId) => api(`/api/save-options?videoId=${encodeURIComponent(videoId)}`);
 export const editPlaylist = (playlistId, videoId, action) => api('/api/playlist/edit', { method: 'POST', body: { playlistId, videoId, action } });
 export const createPlaylist = (title, videoId) => api('/api/playlist/create', { method: 'POST', body: { title, videoId } });
+export const sponsorSegments = (videoId) => api(`/api/sponsorblock?id=${encodeURIComponent(videoId)}`);

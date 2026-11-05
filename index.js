@@ -15,6 +15,7 @@
  *   GET  /api/save-options      ?videoId=  -> playlists with "already contains" flags
  *   POST /api/playlist/edit     { playlistId, videoId, action: add|remove }
  *   POST /api/playlist/create   { title, videoId? }
+ *   GET  /api/sponsorblock      SponsorBlock segments       ?id=
  *   POST /api/lounge/pair       { code }                     -> screen + lounge token
  *   POST /api/lounge/refresh    { screenId }                 -> new lounge token
  *   POST /api/lounge/availability { loungeToken }            -> { online }
@@ -32,6 +33,7 @@ const functions = require('@google-cloud/functions-framework');
 const fs = require('fs');
 const path = require('path');
 const innertube = require('./lib/innertube');
+const sponsorblock = require('./lib/sponsorblock');
 const lounge = require('./lib/lounge');
 const { HttpError, jsonBody, requireString, sendJson, sendError } = require('./lib/util');
 
@@ -159,6 +161,9 @@ async function api(req, res) {
     case 'POST /api/playlist/create': {
       const body = jsonBody(req);
       return sendJson(res, 200, await innertube.createPlaylist(cookiesFor(req), requireString(body, 'title', 'body'), typeof body.videoId === 'string' ? body.videoId : null));
+    }
+    case 'GET /api/sponsorblock': {
+      return sendJson(res, 200, await sponsorblock.segments(requireString(req.query, 'id', 'query')));
     }
     case 'GET /api/comments': {
       return sendJson(res, 200, await innertube.comments(cookiesFor(req), requireString(req.query, 'continuation', 'query')));
