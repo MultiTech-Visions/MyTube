@@ -151,6 +151,26 @@ with its stack).
 
 Local run: `npm install && npm start` → http://localhost:8080.
 
+### Where the cookies live: on the phone
+
+The phone keeps the cookies (browser storage) and sends them with each
+request; every response hands back the latest rotated copy, which the phone
+saves. So the server holds nothing between requests and **minimum instances
+can be 0** (it shuts down when idle; the first press after a pause takes a
+cold start of a second or two). `YT_COOKIES` on the server is only a seed: a
+phone with no cookies adopts it on its first request and keeps it from then
+on. Security note: while `YT_COOKIES` is set, anyone who opens your URL is
+handed that cookie, so remove the variable once the phone has adopted it.
+
+### Cookies stay alive by themselves
+
+YouTube rotates part of the login every few minutes. The server keeps a
+browser-like cookie jar: it saves every cookie YouTube sends back and calls
+the same rotation endpoint an open YouTube tab does (every 9 minutes, and
+once more before giving up on a 401). The phone stores every
+refreshed copy, so nothing is lost when the instance shuts down. `GET /api/cookies/status` shows the jar's state; Cloud Run logs show
+every `[cookies]` update and rotation.
+
 ### Keep it fast: minimum instances = 1
 
 Every button press is phone → Cloud Run → YouTube → Xbox. YouTube's part is

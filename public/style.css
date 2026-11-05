@@ -290,3 +290,9 @@ ol.steps { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); font-size:
 .setting-text { font-size: 14px; }
 .setting-text small { display: block; color: var(--text-2); font-size: 12px; margin-top: 2px; }
 .setting-row select { background: var(--bg); color: var(--text); border: 1px solid var(--surface-3); border-radius: 6px; padding: 4px 8px; font-size: 14px; }
+
+/* Whole now-playing header is a collapse target */
+#np .np-head { cursor: pointer; min-height: 48px; }
+#np .np-head:active { background: rgba(255,255,255,.05); }
+#np .np-head::after { content: ""; position: absolute; left: 50%; top: calc(6px + var(--safe-t)); width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--surface-3); }
+.np { overscroll-behavior: contain; }
