@@ -731,7 +731,61 @@ function closeNowPlaying() {
   $('#np').hidden = true;
   document.body.style.overflow = '';
 }
-$('#np-close').addEventListener('click', closeNowPlaying);
+// The whole header bar collapses the sheet, not just the arrow.
+$('#np .np-head').addEventListener('click', closeNowPlaying);
+
+// Swipe down to close: only when the sheet is scrolled to the top and the
+// gesture starts outside the seek bar. The sheet follows the finger; release
+// past 90 px (or a quick flick) closes, otherwise it springs back.
+(() => {
+  const sheet = $('#np');
+  let startY = 0, startX = 0, dy = 0, t0 = 0, tracking = false, dragging = false;
+  sheet.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || sheet.scrollTop > 0 || e.target.closest('#scrub')) return;
+    tracking = true;
+    dragging = false;
+    startY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
+    dy = 0;
+    t0 = Date.now();
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    dy = e.touches[0].clientY - startY;
+    const dx = e.touches[0].clientX - startX;
+    if (!dragging) {
+      if (Math.abs(dy) < 10 && Math.abs(dx) < 10) return;
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) {
+        tracking = false; // scrolling up or sideways: not ours
+        return;
+      }
+      dragging = true;
+      sheet.style.transition = 'none';
+    }
+    e.preventDefault();
+    sheet.style.transform = `translateY(${Math.max(0, dy)}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (!tracking) return;
+    tracking = false;
+    if (!dragging) return;
+    dragging = false;
+    const fast = dy > 40 && Date.now() - t0 < 250;
+    sheet.style.transition = 'transform .18s ease-out';
+    if (dy > 90 || fast) {
+      sheet.style.transform = 'translateY(100%)';
+      setTimeout(() => {
+        closeNowPlaying();
+        sheet.style.transition = '';
+        sheet.style.transform = '';
+      }, 180);
+    } else {
+      sheet.style.transform = '';
+    }
+  };
+  sheet.addEventListener('touchend', end);
+  sheet.addEventListener('touchcancel', end);
+})();
 $('#np-play').addEventListener('click', guard(togglePlay));
 $('#np-prev').addEventListener('click', guard(() => remote.previous()));
 $('#np-next').addEventListener('click', guard(() => remote.next()));
