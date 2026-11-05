@@ -151,6 +151,17 @@ with its stack).
 
 Local run: `npm install && npm start` → http://localhost:8080.
 
+### Cookies stay alive by themselves (while the instance lives)
+
+YouTube rotates part of the login every few minutes. The server keeps a
+browser-like cookie jar: it saves every cookie YouTube sends back and calls
+the same rotation endpoint an open YouTube tab does (every 9 minutes, and
+once more before giving up on a 401). The jar is in memory, so keep
+**minimum instances = 1**. If the instance is replaced, it starts again from
+`YT_COOKIES`, which may by then be too old; copy a fresh set if that
+happens. `GET /api/cookies/status` shows the jar's state; Cloud Run logs show
+every `[cookies]` update and rotation.
+
 ### Keep it fast: minimum instances = 1
 
 Every button press is phone → Cloud Run → YouTube → Xbox. YouTube's part is

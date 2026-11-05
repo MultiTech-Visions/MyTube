@@ -31,6 +31,12 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
     log('error', `${method} ${path.split('?')[0]} network failure: ${e.message}`);
     throw e;
   }
+  const updated = res.headers.get('X-YT-Cookies-Updated');
+  if (updated && store.settings.cookies) {
+    store.settings.cookies = decodeURIComponent(updated);
+    store.saveSettings();
+    log('app', 'stored refreshed YouTube cookies from the server');
+  }
   const text = await res.text();
   let json;
   try {

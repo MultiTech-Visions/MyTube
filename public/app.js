@@ -144,6 +144,22 @@ function card(v, { compact = false } = {}) {
   );
 }
 
+/**
+ * After a page loads, keep loading while the end-of-list marker is still on
+ * (or near) the screen. An IntersectionObserver only fires when the marker
+ * moves in or out of view, so a short page that leaves it visible would
+ * otherwise never ask for more.
+ */
+function stillNearEnd(sentinelId) {
+  const r = document.getElementById(sentinelId).getBoundingClientRect();
+  return r.top < window.innerHeight + 600;
+}
+function fillIfShort(sentinelId, viewName, hasMore, loadMore) {
+  requestAnimationFrame(() => {
+    if (ui.view === viewName && hasMore() && stillNearEnd(sentinelId)) loadMore().catch(showError);
+  });
+}
+
 function renderList(container, items) {
   container.replaceChildren(...items.map((v) => card(v)));
 }
@@ -163,6 +179,7 @@ async function loadFeed(reset) {
     f.continuation = res.continuation;
     f.signedIn = res.signedIn;
     f.loaded = true;
+    debug.log('app', `home feed page: +${res.items.length} videos (total ${f.items.length}), more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
     renderList($('#feed-list'), f.items);
     const notice = $('#feed-notice');
     if (!res.signedIn) {
@@ -175,6 +192,9 @@ async function loadFeed(reset) {
     } else {
       notice.hidden = true;
     }
+    if (!res.continuation && f.items.length > 0) {
+      $('#feed-list').append(el('p', { class: 'empty' }, 'YouTube sent no more recommendations. TV tab → Debug log → Copy log shows what it sent.'));
+    }
     if (f.items.length === 0 && reset) {
       $('#feed-list').replaceChildren(el('p', { class: 'empty' }, res.signedIn ? 'YouTube returned an empty feed.' : 'Nothing to show without your account. Use Search, or add cookies in the TV tab.'));
     }
@@ -182,6 +202,7 @@ async function loadFeed(reset) {
     f.loading = false;
     $('#feed-loading').hidden = true;
   }
+  fillIfShort('feed-sentinel', 'home', () => Boolean(f.continuation), () => loadFeed(false));
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +232,7 @@ async function loadSearch(first) {
     s.loading = false;
     $('#search-loading').hidden = true;
   }
+  fillIfShort('search-sentinel', 'search', () => Boolean(s.continuation), () => loadSearch(false));
 }
 
 // Infinite scroll for both lists.
@@ -1302,6 +1324,7 @@ async function loadLibrary(reset) {
     L.loading = false;
     $('#library-loading').hidden = true;
   }
+  fillIfShort('library-sentinel', 'library', () => Boolean(L.continuation), () => loadLibrary(false));
 }
 new IntersectionObserver((entries) => {
   if (entries.some((e) => e.isIntersecting) && ui.view === 'library' && L.loaded) loadLibrary(false).catch(showError);

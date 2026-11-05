@@ -162,6 +162,9 @@ async function api(req, res) {
       const body = jsonBody(req);
       return sendJson(res, 200, await innertube.createPlaylist(cookiesFor(req), requireString(body, 'title', 'body'), typeof body.videoId === 'string' ? body.videoId : null));
     }
+    case 'GET /api/cookies/status': {
+      return sendJson(res, 200, { source: req.get('X-YT-Cookies') ? 'phone' : process.env.YT_COOKIES ? 'server' : 'none', jar: innertube.jarStatus(cookiesFor(req)) });
+    }
     case 'GET /api/sponsorblock': {
       return sendJson(res, 200, await sponsorblock.segments(requireString(req.query, 'id', 'query')));
     }
@@ -222,6 +225,17 @@ async function api(req, res) {
 
 functions.http('mytube', async (req, res) => {
   try {
+    // If the phone holds the cookies, send back the refreshed copy so it never stores a stale one.
+    const fromPhone = req.get('X-YT-Cookies');
+    if (typeof fromPhone === 'string' && fromPhone.trim() && req.path.startsWith('/api/') && !req.path.startsWith('/api/lounge/')) {
+      const seed = innertube.normaliseCookies(decodeURIComponent(fromPhone));
+      const origJson = res.end.bind(res);
+      res.end = (chunk, ...rest) => {
+        const latest = innertube.currentCookies(seed);
+        if (!res.headersSent && latest && latest !== seed) res.set('X-YT-Cookies-Updated', encodeURIComponent(latest));
+        return origJson(chunk, ...rest);
+      };
+    }
     if (req.path.startsWith('/api/')) await api(req, res);
     else if (req.method === 'GET' || req.method === 'HEAD') serveStatic(req, res);
     else throw new HttpError(405, 'METHOD_NOT_ALLOWED', `${req.method} not allowed`);
