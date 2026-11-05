@@ -32,8 +32,13 @@ big **Play now / Play next / Add to queue** buttons, now-playing screen with
 scrubbing, chapters (tap to seek, chapter gaps drawn on the bar), ±10 s, previous
 / next, autoplay toggle, queue with reorder/remove, related videos for whatever
 is playing, full description with every link resolved (YouTube hides real URLs
-behind redirects and truncates them), comments with replies, mini player,
+behind redirects and truncates them), comments with replies, like / dislike,
+Save to Watch Later or any playlist (or a new one), a Library tab with Watch
+Later, watch history and your playlists (Play all / Queue all), mini player,
 installable to the Android home screen, and a built-in debug log.
+
+Everything under Library, plus rating and saving, needs your cookies: YouTube
+only answers those calls for a signed-in account.
 
 ## Debugging: where the Xbox's "logs" actually are
 
@@ -143,6 +148,13 @@ kicks the TV out of the player (the app refuses to do that).
 | `GET /api/search?q=` / `?continuation=` | Search |
 | `GET /api/watch?id=` / `?continuation=` | Title, channel, full description + resolved links, chapters, related list, comments continuation |
 | `GET /api/comments?continuation=` | One page of comments, or of a thread's replies (`repliesContinuation`) |
+| `GET /api/library/history[?continuation=]` | Watch history (cookies) |
+| `GET /api/library/playlists[?continuation=]` | Your playlists (cookies) |
+| `GET /api/playlist?id=WL\|LL\|PL…` / `?continuation=` | A playlist's videos; `WL` = Watch Later, `LL` = Liked videos |
+| `POST /api/rate {videoId, rating: like\|dislike\|none}` | Like / dislike / clear (TV client, as youtubei.js does) |
+| `GET /api/save-options?videoId=` | Your playlists with "already contains this video" flags |
+| `POST /api/playlist/edit {playlistId, videoId, action: add\|remove}` | Add to / remove from a playlist |
+| `POST /api/playlist/create {title, videoId?}` | New private playlist |
 | `POST /api/lounge/pair {code}` | TV code → `screenId` + `loungeToken` |
 | `POST /api/lounge/refresh {screenId}` | New lounge token |
 | `POST /api/lounge/availability {loungeToken}` | Is the TV online |
@@ -153,9 +165,16 @@ kicks the TV out of the player (the app refuses to do that).
 
 Errors are always `{"error":{"code","message","detail"}}` with a real HTTP
 status. Codes the app reacts to: `TOKEN_EXPIRED` (refresh + reconnect),
-`SESSION_LOST` (reconnect), `SCREEN_GONE` (pair again), `COOKIES_INVALID` /
-`COOKIES_REJECTED`, `UPSTREAM_SHAPE_CHANGED` (YouTube changed a JSON layout;
-the message names the path that went missing).
+`SESSION_LOST` (reconnect), `SCREEN_GONE` (pair again), `SIGN_IN_REQUIRED`
+(no cookies), `COOKIES_INVALID` / `COOKIES_REJECTED`, `PLAYLIST_EDIT_FAILED`,
+`UPSTREAM_SHAPE_CHANGED` (YouTube changed a JSON layout; the message names the
+path that went missing).
+
+Untested against a signed-in account at the time of writing (no cookies were
+available in the build environment): history, your playlists page, Watch
+Later, rating, the Save dialog, playlist edit/create. Public playlists, like
+status/count parsing and everything else were verified live. If one of these
+fails, the debug log carries the server's error code and the JSON path.
 
 ## Prior art
 

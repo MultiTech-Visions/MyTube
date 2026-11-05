@@ -55,3 +55,11 @@ export const search = (q, continuation) =>
 export const watch = (videoId, continuation) =>
   api(continuation ? `/api/watch?continuation=${encodeURIComponent(continuation)}` : `/api/watch?id=${encodeURIComponent(videoId)}`);
 export const comments = (continuation) => api(`/api/comments?continuation=${encodeURIComponent(continuation)}`);
+export const history = (continuation) => api(`/api/library/history${continuation ? `?continuation=${encodeURIComponent(continuation)}` : ''}`);
+export const playlists = (continuation) => api(`/api/library/playlists${continuation ? `?continuation=${encodeURIComponent(continuation)}` : ''}`);
+export const playlist = (id, continuation) =>
+  api(continuation ? `/api/playlist?continuation=${encodeURIComponent(continuation)}` : `/api/playlist?id=${encodeURIComponent(id)}`);
+export const rate = (videoId, rating) => api('/api/rate', { method: 'POST', body: { videoId, rating } });
+export const saveOptions = (videoId) => api(`/api/save-options?videoId=${encodeURIComponent(videoId)}`);
+export const editPlaylist = (playlistId, videoId, action) => api('/api/playlist/edit', { method: 'POST', body: { playlistId, videoId, action } });
+export const createPlaylist = (title, videoId) => api('/api/playlist/create', { method: 'POST', body: { title, videoId } });

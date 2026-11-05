@@ -56,6 +56,24 @@
       <p class="empty" id="queue-empty">Your queue is empty. Tap any video and choose <b>Add to queue</b>.</p>
     </section>
 
+    <section class="view" id="view-library" hidden>
+      <div class="chips" id="library-chips">
+        <button class="chip active" data-lib="WL">Watch later</button>
+        <button class="chip" data-lib="history">History</button>
+        <button class="chip" data-lib="playlists">Playlists</button>
+      </div>
+      <div class="notice" id="library-notice" hidden></div>
+      <div class="plhead" id="library-plhead" hidden>
+        <button class="iconbtn" id="library-back" aria-label="Back"></button>
+        <div class="plhead-text"><div class="plhead-title" id="library-pltitle"></div><div class="plhead-sub" id="library-plsub"></div></div>
+        <button class="btn small" id="library-playall">Play all</button>
+        <button class="btn small ghost" id="library-queueall">Queue all</button>
+      </div>
+      <div class="list" id="library-list"></div>
+      <div class="sentinel" id="library-sentinel"></div>
+      <div class="loading" id="library-loading" hidden><span class="spinner"></span></div>
+    </section>
+
     <section class="view" id="view-tv" hidden></section>
   </main>
 
@@ -74,6 +92,7 @@
     <button class="navbtn active" data-view="home"><span class="ico" data-icon="home"></span><span>Home</span></button>
     <button class="navbtn" data-view="search"><span class="ico" data-icon="search"></span><span>Search</span></button>
     <button class="navbtn" data-view="queue"><span class="ico" data-icon="queue"></span><span>Queue</span><span class="badge" id="queue-badge" hidden></span></button>
+    <button class="navbtn" data-view="library"><span class="ico" data-icon="library"></span><span>Library</span></button>
     <button class="navbtn" data-view="tv"><span class="ico" data-icon="tv"></span><span>TV</span></button>
   </nav>
 
@@ -99,6 +118,11 @@
     <div class="np-desc" id="np-desc" hidden>
       <div class="np-desc-text" id="np-desc-text"></div>
       <div class="links" id="np-links"></div>
+    </div>
+    <div class="np-actions" id="np-actions">
+      <button class="pill" id="np-like" aria-label="Like"><span class="ico" data-icon="thumbup"></span><span id="np-like-count"></span></button>
+      <button class="pill" id="np-dislike" aria-label="Dislike"><span class="ico" data-icon="thumbdown"></span></button>
+      <button class="pill" id="np-save"><span class="ico" data-icon="bookmark"></span>Save</button>
     </div>
     <div class="scrub" id="scrub">
       <div class="scrub-track" id="scrub-track"></div>
@@ -146,7 +170,16 @@
     <button class="btn action" id="sheet-playnow"><span class="ico" data-icon="play"></span>Play now</button>
     <button class="btn action" id="sheet-playnext"><span class="ico" data-icon="playnext"></span>Play next</button>
     <button class="btn action" id="sheet-addqueue"><span class="ico" data-icon="addqueue"></span>Add to queue</button>
+    <button class="btn action small-action" id="sheet-save"><span class="ico" data-icon="bookmark"></span>Save to Watch later / playlist</button>
     <button class="btn ghost" id="sheet-cancel">Cancel</button>
+  </section>
+
+  <!-- Save to playlist sheet -->
+  <section class="sheet" id="save-sheet" hidden>
+    <div class="sheet-head"><b>Save to…</b><button class="iconbtn" id="save-close" aria-label="Close"></button></div>
+    <div class="sheet-video small" id="save-video"></div>
+    <div class="save-list" id="save-list"><div class="loading"><span class="spinner"></span></div></div>
+    <button class="btn ghost" id="save-new">+ New playlist</button>
   </section>
 
   <!-- Debug log viewer -->

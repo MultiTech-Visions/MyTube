@@ -8,6 +8,13 @@
  *   GET  /api/search            Search                      ?q=  ?continuation=
  *   GET  /api/watch             Video info+chapters+related ?id= ?continuation=
  *   GET  /api/comments          Comments / replies          ?continuation=
+ *   GET  /api/library/history   Watch history (cookies)     ?continuation=
+ *   GET  /api/library/playlists Your playlists (cookies)    ?continuation=
+ *   GET  /api/playlist          Playlist videos             ?id=WL|LL|PL… ?continuation=
+ *   POST /api/rate              { videoId, rating: like|dislike|none }
+ *   GET  /api/save-options      ?videoId=  -> playlists with "already contains" flags
+ *   POST /api/playlist/edit     { playlistId, videoId, action: add|remove }
+ *   POST /api/playlist/create   { title, videoId? }
  *   POST /api/lounge/pair       { code }                     -> screen + lounge token
  *   POST /api/lounge/refresh    { screenId }                 -> new lounge token
  *   POST /api/lounge/availability { loungeToken }            -> { online }
@@ -124,6 +131,34 @@ async function api(req, res) {
       const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
       const id = cont ? '' : requireString(req.query, 'id', 'query');
       return sendJson(res, 200, await innertube.watch(cookiesFor(req), id, cont));
+    }
+    case 'GET /api/library/history': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      return sendJson(res, 200, await innertube.history(cookiesFor(req), cont));
+    }
+    case 'GET /api/library/playlists': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      return sendJson(res, 200, await innertube.playlists(cookiesFor(req), cont));
+    }
+    case 'GET /api/playlist': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      const id = cont ? '' : requireString(req.query, 'id', 'query');
+      return sendJson(res, 200, await innertube.playlist(cookiesFor(req), id, cont));
+    }
+    case 'POST /api/rate': {
+      const body = jsonBody(req);
+      return sendJson(res, 200, await innertube.rate(cookiesFor(req), requireString(body, 'videoId', 'body'), requireString(body, 'rating', 'body')));
+    }
+    case 'GET /api/save-options': {
+      return sendJson(res, 200, await innertube.saveOptions(cookiesFor(req), requireString(req.query, 'videoId', 'query')));
+    }
+    case 'POST /api/playlist/edit': {
+      const body = jsonBody(req);
+      return sendJson(res, 200, await innertube.editPlaylist(cookiesFor(req), requireString(body, 'playlistId', 'body'), requireString(body, 'videoId', 'body'), requireString(body, 'action', 'body')));
+    }
+    case 'POST /api/playlist/create': {
+      const body = jsonBody(req);
+      return sendJson(res, 200, await innertube.createPlaylist(cookiesFor(req), requireString(body, 'title', 'body'), typeof body.videoId === 'string' ? body.videoId : null));
     }
     case 'GET /api/comments': {
       return sendJson(res, 200, await innertube.comments(cookiesFor(req), requireString(req.query, 'continuation', 'query')));

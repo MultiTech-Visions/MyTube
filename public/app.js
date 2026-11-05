@@ -6,7 +6,7 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
-import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments } from './api.js';
+import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist } from './api.js';
 import { store } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
 import { icon } from './icons.js';
@@ -71,6 +71,10 @@ const ui = {
   descOpen: false,
   /** comments for the current video: { videoId, items, continuation, loading, replies: Map } */
   comments: null,
+  /** Library tab: which list is shown and its paging state */
+  library: { tab: 'WL', items: [], continuation: null, loading: false, loaded: false, playlist: null, playlists: [] },
+  /** Save sheet: { video, playlists:[...] } */
+  save: null,
   sheetVideo: null,
   scrubbing: false,
   /** true once THIS remote started the TV's playlist (queue commands are ignored otherwise on Xbox). */
@@ -104,6 +108,8 @@ $('#np-next').innerHTML = icon('next');
 $('#np-back').innerHTML = icon('back10');
 $('#np-fwd').innerHTML = icon('fwd10');
 $('#debug-close').innerHTML = icon('close');
+$('#library-back').innerHTML = icon('back');
+$('#save-close').innerHTML = icon('close');
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -117,6 +123,7 @@ function showView(name) {
   if (name === 'search') setTimeout(() => $('#search-input').focus(), 50);
   if (name === 'queue') renderQueue();
   if (name === 'tv') renderTvView();
+  if (name === 'library' && !ui.library.loaded) loadLibrary(true).catch(showError);
   window.scrollTo(0, 0);
 }
 for (const b of document.querySelectorAll('.navbtn')) b.addEventListener('click', () => showView(b.dataset.view));
@@ -234,11 +241,84 @@ function closeSheet() {
   $('#sheet-backdrop').hidden = true;
   ui.sheetVideo = null;
 }
-$('#sheet-backdrop').addEventListener('click', closeSheet);
+$('#sheet-backdrop').addEventListener('click', () => {
+  closeSheet();
+  if (ui.save) closeSaveSheet();
+});
 $('#sheet-cancel').addEventListener('click', closeSheet);
 $('#sheet-playnow').addEventListener('click', guard(async () => { const v = ui.sheetVideo; closeSheet(); await playNow(v); }));
 $('#sheet-playnext').addEventListener('click', guard(async () => { const v = ui.sheetVideo; closeSheet(); await playNext(v); }));
 $('#sheet-addqueue').addEventListener('click', guard(async () => { const v = ui.sheetVideo; closeSheet(); await addToQueue(v); }));
+$('#sheet-save').addEventListener('click', guard(async () => { const v = ui.sheetVideo; closeSheet(); await openSaveSheet(v); }));
+
+// ---------------------------------------------------------------------------
+// Save to Watch later / playlist
+// ---------------------------------------------------------------------------
+async function openSaveSheet(v) {
+  ui.save = { video: v, playlists: null };
+  const sheet = $('#save-sheet');
+  $('#save-video').replaceChildren(el('img', { src: v.thumbnail, alt: '' }), el('div', {}, el('div', { class: 'sheet-title' }, v.title), el('div', { class: 'sheet-sub' }, v.channel)));
+  $('#save-list').replaceChildren(el('div', { class: 'loading' }, el('span', { class: 'spinner' })));
+  sheet.hidden = false;
+  $('#sheet-backdrop').hidden = false;
+  try {
+    const res = await apiSaveOptions(v.videoId);
+    if (!ui.save || ui.save.video !== v) return;
+    ui.save.playlists = res.playlists;
+    renderSaveList();
+  } catch (e) {
+    closeSaveSheet();
+    throw e;
+  }
+}
+function closeSaveSheet() {
+  $('#save-sheet').hidden = true;
+  $('#sheet-backdrop').hidden = true;
+  ui.save = null;
+}
+function renderSaveList() {
+  const list = $('#save-list');
+  const rows = ui.save.playlists.map((pl) =>
+    el(
+      'button',
+      { class: `save-row${pl.contains ? ' on' : ''}${pl.busy ? ' busy' : ''}`, type: 'button', disabled: pl.busy, onclick: guard(() => toggleSave(pl)) },
+      el('span', { class: 'box', html: pl.contains ? icon('check') : '' }),
+      el('span', { class: 'save-title' }, pl.title, el('div', { class: 'save-sub' }, pl.playlistId === 'WL' ? 'Watch later' : pl.privacy.toLowerCase()))
+    )
+  );
+  list.replaceChildren(...rows);
+  if (rows.length === 0) list.replaceChildren(el('p', { class: 'empty' }, 'No playlists yet.'));
+}
+async function toggleSave(pl) {
+  const v = ui.save.video;
+  pl.busy = true;
+  renderSaveList();
+  try {
+    await apiEditPlaylist(pl.playlistId, v.videoId, pl.contains ? 'remove' : 'add');
+    pl.contains = !pl.contains;
+    debug.log('app', `${pl.contains ? 'added to' : 'removed from'} ${pl.title} (${pl.playlistId}): ${v.videoId}`);
+    toast(`${pl.contains ? 'Added to' : 'Removed from'} ${pl.title}`);
+    if (pl.playlistId === 'WL' || (ui.library.playlist && ui.library.playlist.playlistId === pl.playlistId) || ui.library.tab === 'playlists') ui.library.loaded = false;
+  } finally {
+    pl.busy = false;
+    if (ui.save) renderSaveList();
+  }
+}
+$('#save-close').addEventListener('click', closeSaveSheet);
+$('#save-new').addEventListener('click', guard(async () => {
+  const v = ui.save.video;
+  const title = prompt('Name for the new playlist');
+  if (!title || !title.trim()) return;
+  const res = await apiCreatePlaylist(title.trim(), v.videoId);
+  debug.log('app', `created playlist ${res.playlistId} "${title.trim()}" with ${v.videoId}`);
+  toast(`Created "${title.trim()}" and saved the video`);
+  ui.library.loaded = false;
+  const opts = await apiSaveOptions(v.videoId);
+  if (ui.save && ui.save.video === v) {
+    ui.save.playlists = opts.playlists;
+    renderSaveList();
+  }
+}));
 
 // ---------------------------------------------------------------------------
 // Queue model (local truth) + TV sync
@@ -551,6 +631,37 @@ $('#np-meta').addEventListener('click', () => {
   renderDescription();
 });
 
+async function setRating(which) {
+  const vid = remote.player.videoId;
+  const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
+  if (!data) throw new Error('Nothing is playing');
+  const current = data.rating;
+  const wanted = which === 'like' ? (current === 'LIKE' ? 'none' : 'like') : current === 'DISLIKE' ? 'none' : 'dislike';
+  const res = await apiRate(vid, wanted);
+  data.rating = res.rating;
+  debug.log('app', `rated ${vid}: ${res.rating}`);
+  renderActions();
+  toast(res.rating === 'LIKE' ? 'Liked' : res.rating === 'DISLIKE' ? 'Disliked' : 'Rating removed');
+}
+$('#np-like').addEventListener('click', guard(() => setRating('like')));
+$('#np-dislike').addEventListener('click', guard(() => setRating('dislike')));
+$('#np-save').addEventListener('click', guard(() => {
+  const vid = remote.player.videoId;
+  const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
+  if (!data) throw new Error('Nothing is playing');
+  return openSaveSheet({ ...data.video, duration: '' });
+}));
+
+function renderActions() {
+  const vid = remote.player.videoId;
+  const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
+  const like = $('#np-like'), dislike = $('#np-dislike'), save = $('#np-save');
+  like.disabled = dislike.disabled = save.disabled = !data;
+  like.classList.toggle('on', Boolean(data && data.rating === 'LIKE'));
+  dislike.classList.toggle('on', Boolean(data && data.rating === 'DISLIKE'));
+  $('#np-like-count').textContent = data ? data.likeCount : '';
+}
+
 /** Turns plain text into text nodes with clickable http(s) links. */
 function linkify(textValue) {
   const frag = document.createDocumentFragment();
@@ -653,6 +764,7 @@ function renderNowPlaying() {
   $('#np-title').textContent = title;
   $('#np-sub-text').textContent = data ? joinMeta(data.video.channel, data.video.views, data.video.published) : item ? joinMeta(item.channel, item.duration) : '';
   renderDescription();
+  renderActions();
   $('#np-thumb').src = vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : item ? item.thumbnail : '';
   $('#np-play').innerHTML = icon(pl.state === PLAYER_STATE.PLAYING || pl.state === PLAYER_STATE.AD ? 'pause' : 'play');
   $('#np-state').textContent = !remote.connected ? 'Not connected' : !vid ? 'TV idle' : pl.state === PLAYER_STATE.PAUSED ? 'Paused' : pl.state === PLAYER_STATE.BUFFERING ? 'Buffering' : pl.state === PLAYER_STATE.ENDED ? 'Ended' : '';
@@ -879,6 +991,158 @@ async function loadMoreRelated() {
   watchCache.set(w.videoId, { ...w });
   renderRelated();
 }
+
+// ---------------------------------------------------------------------------
+// Library: Watch later, History, Playlists
+// ---------------------------------------------------------------------------
+const L = ui.library;
+for (const chip of document.querySelectorAll('#library-chips .chip')) {
+  chip.addEventListener('click', () => {
+    L.tab = chip.dataset.lib;
+    L.playlist = null;
+    loadLibrary(true).catch(showError);
+  });
+}
+$('#library-back').addEventListener('click', () => {
+  L.playlist = null;
+  loadLibrary(true).catch(showError);
+});
+
+function playlistRow(pl) {
+  return el(
+    'button',
+    { class: 'plrow', type: 'button', onclick: guard(() => openPlaylist(pl)) },
+    el('div', { class: 'thumb' }, pl.thumbnail ? el('img', { src: pl.thumbnail, alt: '', loading: 'lazy' }) : null, pl.count ? el('span', { class: 'dur' }, pl.count) : null),
+    el('div', { class: 'card-text' }, el('div', {}, el('div', { class: 'card-title' }, pl.title), el('div', { class: 'card-sub' }, pl.byline)))
+  );
+}
+
+function renderLibrary() {
+  for (const chip of document.querySelectorAll('#library-chips .chip')) chip.classList.toggle('active', chip.dataset.lib === L.tab);
+  const head = $('#library-plhead');
+  head.hidden = !L.playlist;
+  if (L.playlist) {
+    $('#library-pltitle').textContent = L.playlist.title;
+    $('#library-plsub').textContent = joinMeta(L.playlist.count, `${L.items.length} loaded`);
+  }
+  const list = $('#library-list');
+  const notice = $('#library-notice');
+  notice.hidden = true;
+  if (L.tab === 'playlists' && !L.playlist) {
+    list.replaceChildren(...L.playlists.map(playlistRow));
+    if (L.playlists.length === 0 && L.loaded) list.replaceChildren(el('p', { class: 'empty' }, 'No playlists found on your account.'));
+    return;
+  }
+  list.replaceChildren(...L.items.map((v) => card(v)));
+  if (L.items.length === 0 && L.loaded) list.replaceChildren(el('p', { class: 'empty' }, L.tab === 'history' ? 'No watch history.' : 'Nothing here yet.'));
+}
+
+function libraryError(e) {
+  const notice = $('#library-notice');
+  notice.hidden = false;
+  notice.className = 'notice warn';
+  notice.replaceChildren(
+    el('span', {}, e.code === 'SIGN_IN_REQUIRED' || e.code === 'COOKIES_REJECTED' ? 'Your library needs your YouTube cookies. Add them in the TV tab.' : e.message),
+    el('button', { class: 'btn ghost small', onclick: () => showView('tv') }, 'Open TV tab')
+  );
+}
+
+/** Loads the current library list (first page when reset, next page otherwise). */
+async function loadLibrary(reset) {
+  if (L.loading) return;
+  if (reset) {
+    L.items = [];
+    L.playlists = [];
+    L.continuation = null;
+    L.loaded = false;
+    $('#library-list').replaceChildren();
+    renderLibrary();
+  } else if (!L.continuation) return;
+  L.loading = true;
+  $('#library-loading').hidden = false;
+  try {
+    if (L.playlist) {
+      const res = await apiPlaylist(L.playlist.playlistId, reset ? null : L.continuation);
+      if (reset) L.playlist = { ...L.playlist, title: res.title, count: res.count };
+      L.items = L.items.concat(res.items);
+      L.continuation = res.continuation;
+    } else if (L.tab === 'WL') {
+      const res = await apiPlaylist('WL', reset ? null : L.continuation);
+      L.items = L.items.concat(res.items);
+      L.continuation = res.continuation;
+    } else if (L.tab === 'history') {
+      const res = await apiHistory(reset ? null : L.continuation);
+      L.items = L.items.concat(res.items);
+      L.continuation = res.continuation;
+    } else {
+      const res = await apiPlaylists(reset ? null : L.continuation);
+      L.playlists = L.playlists.concat(res.items);
+      L.continuation = res.continuation;
+    }
+    L.loaded = true;
+    renderLibrary();
+  } catch (e) {
+    L.loaded = true;
+    renderLibrary();
+    libraryError(e);
+    throw e;
+  } finally {
+    L.loading = false;
+    $('#library-loading').hidden = true;
+  }
+}
+new IntersectionObserver((entries) => {
+  if (entries.some((e) => e.isIntersecting) && ui.view === 'library' && L.loaded) loadLibrary(false).catch(showError);
+}, { rootMargin: '600px' }).observe($('#library-sentinel'));
+
+async function openPlaylist(pl) {
+  L.playlist = pl;
+  await loadLibrary(true);
+}
+
+/** Every video of the open playlist, following continuations up to a cap the TV can take. */
+async function allPlaylistItems() {
+  const CAP = 200;
+  let items = L.items.slice();
+  let cont = L.continuation;
+  while (cont && items.length < CAP) {
+    const res = await apiPlaylist(L.playlist.playlistId, cont);
+    items = items.concat(res.items);
+    cont = res.continuation;
+  }
+  if (items.length > CAP) {
+    toast(`Taking the first ${CAP} videos`);
+    items = items.slice(0, CAP);
+  }
+  return items;
+}
+
+/** Appends many videos to the local queue and tells the TV once. */
+async function queueMany(items, playFirst) {
+  const fresh = items.filter((v) => !Q.items.some((it) => it.videoId === v.videoId) && v.videoId !== remote.player.videoId);
+  if (fresh.length === 0) throw new Error('All of those are already in the queue');
+  for (const v of fresh) store.rememberVideo(v);
+  const start = Q.items.length;
+  Q.items.push(...fresh.map(queueItem));
+  debug.log('app', `queued ${fresh.length} videos from ${L.playlist ? L.playlist.title : L.tab}`, { playFirst, connected: remote.connected, owned: ui.owned });
+  if (playFirst) Q.currentIndex = start;
+  saveQueue();
+  if (!remote.connected) {
+    toast(`${fresh.length} videos queued. Connect to the TV to play.`);
+    return;
+  }
+  if (playFirst || !remote.player.videoId) {
+    await pushQueue(playFirst ? start : Math.max(0, Q.currentIndex), playFirst ? 0 : resumeTimeFor(Math.max(0, Q.currentIndex)));
+  } else if (tvQueueIsOurs() && !ui.stale && fresh.length <= 5) {
+    for (const v of fresh) await remote.addVideo(v.videoId);
+  } else {
+    // Many videos: one setPlaylist is far more reliable than a burst of addVideo on the Xbox.
+    await pushQueue(Q.currentIndex, remote.estimatedTime());
+  }
+  toast(playFirst ? `Playing ${fresh.length} videos` : `${fresh.length} videos added to the queue`);
+}
+$('#library-playall').addEventListener('click', guard(async () => queueMany(await allPlaylistItems(), true)));
+$('#library-queueall').addEventListener('click', guard(async () => queueMany(await allPlaylistItems(), false)));
 
 // ---------------------------------------------------------------------------
 // Remote wiring
