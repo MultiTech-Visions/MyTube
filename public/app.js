@@ -354,10 +354,36 @@ function resumeTimeFor(index) {
 }
 
 /** setPlaylist with the whole local queue. The one call that makes this remote the queue's owner. */
+/**
+ * YouTube tends to ignore the currentTime of a reload and restore its own saved
+ * position (often 10-20 s stale), so a non-zero start is enforced with a seekTo
+ * once the TV reports the video playing.
+ */
+let pendingSeek = null;
+function armSeek(videoId, seconds) {
+  pendingSeek = { videoId, seconds, until: Date.now() + 25000 };
+}
+function applyPendingSeek() {
+  if (!pendingSeek) return;
+  if (Date.now() > pendingSeek.until) {
+    pendingSeek = null;
+    return;
+  }
+  const pl = remote.player;
+  if (pl.videoId !== pendingSeek.videoId || pl.state !== PLAYER_STATE.PLAYING || remote.ad.active) return;
+  const want = pendingSeek.seconds;
+  pendingSeek = null;
+  if (Math.abs(pl.currentTime - want) < 3) return; // the TV honoured it
+  debug.log('app', `forcing seek to ${Math.floor(want)}s (TV resumed at ${Math.floor(pl.currentTime)}s)`);
+  remote.seekTo(want).catch(showError);
+}
+
 async function pushQueue(index, seconds) {
   if (Q.items.length === 0) throw new Error('The queue is empty');
   if (!remote.connected) throw new Error('Not connected to the TV. Open the TV tab to connect.');
   debug.log('app', `pushQueue: ${Q.items.length} videos, start #${index + 1} at ${Math.floor(seconds)}s`, Q.items.map((it) => it.videoId));
+  if (seconds > 0) armSeek(Q.items[index].videoId, seconds);
+  else pendingSeek = null;
   await remote.setPlaylist(Q.items.map((it) => it.videoId), index, seconds);
   ui.owned = true;
   ui.stale = false;
@@ -717,14 +743,15 @@ $('#np-dodge').addEventListener('click', guard(() => dodgeAd('button')));
 // ---------------------------------------------------------------------------
 // Ad strategies: auto-skip, dodge (exit + reload), mute, SponsorBlock
 // ---------------------------------------------------------------------------
-const adRun = { videoId: null, dodges: 0, muted: false, busy: false, autoSkipped: 0 };
+const adRun = { videoId: null, dodges: 0, muted: false, busy: false, autoSkipped: 0, waitTimer: null };
 const ADS = () => store.settings.ads;
+const DODGE_MIN_AD_SECONDS = 5; // reloads sent earlier than this do not take (iSponsorBlockTV #489)
 
 function adStatusText() {
   const s = ADS();
   const parts = [];
   parts.push(s.autoSkip ? 'auto-skip on' : 'auto-skip off');
-  if (s.dodge) parts.push(`dodge ${adRun.dodges}/${s.dodgeMax}`);
+  if (s.dodge) parts.push(adRun.waitTimer ? 'dodge: waiting for 5 s of ad' : adRun.busy ? 'dodge: reloading' : `dodge ${adRun.dodges}/${s.dodgeMax}`);
   if (adRun.muted) parts.push('muted');
   return parts.join(' · ');
 }
@@ -735,6 +762,12 @@ function resetAdRun(videoId) {
   adRun.dodges = 0;
   adRun.autoSkipped = 0;
 }
+function cancelDodgeWait() {
+  if (adRun.waitTimer) {
+    clearTimeout(adRun.waitTimer);
+    adRun.waitTimer = null;
+  }
+}
 
 remote.addEventListener('ad', (e) => {
   const phase = e.detail.phase;
@@ -743,40 +776,60 @@ remote.addEventListener('ad', (e) => {
   debug.log('app', `ad ${phase}`, { ad: remote.ad, dodges: adRun.dodges, settings: s });
   if (phase === 'start') {
     if (s.muteAds && !adRun.muted) {
-      remote.mute().then(() => { adRun.muted = true; }).catch(showError);
+      remote.setMuted(true).then(() => { adRun.muted = true; }).catch(showError);
     }
-    if (s.dodge && adRun.dodges < s.dodgeMax && !adRun.busy) dodgeAd('auto').catch(showError);
+    if (s.dodge && !remote.ad.skipEnabled && adRun.dodges < s.dodgeMax && !adRun.busy) scheduleDodge();
   } else if (phase === 'skippable') {
+    cancelDodgeWait(); // a skip is cheaper than a reload
     if (s.autoSkip) {
       adRun.autoSkipped += 1;
       remote.skipAd().then(() => toast('Ad skipped automatically')).catch(showError);
     }
   } else if (phase === 'end') {
+    cancelDodgeWait();
     if (adRun.muted) {
-      remote.unMute().then(() => { adRun.muted = false; }).catch(showError);
+      remote.setMuted(false).then(() => { adRun.muted = false; }).catch(showError);
     }
   }
   if (ui.npOpen) renderNowPlaying();
 });
 
+/** Waits until the ad has played DODGE_MIN_AD_SECONDS, then reloads. Cancelled if the ad ends or becomes skippable first. */
+function scheduleDodge() {
+  cancelDodgeWait();
+  const wait = Math.max(0, DODGE_MIN_AD_SECONDS - remote.adElapsed()) * 1000;
+  debug.log('app', `ad dodge armed: reload in ${Math.round(wait / 1000)}s`);
+  adRun.waitTimer = setTimeout(() => {
+    adRun.waitTimer = null;
+    if (!remote.ad.active) return;
+    dodgeAd('auto').catch(showError);
+  }, wait);
+  if (ui.npOpen) renderNowPlaying();
+}
+
 /**
- * Your manual trick, automated: leave the player (stopVideo), then load the
- * same video again at the position it was at. YouTube usually treats that as
- * a fresh load whose ad decision has already been spent.
+ * Your manual trick, automated: optionally leave the player (stopVideo, like
+ * pressing B), load the same video again at the position it was at, then force
+ * a seek to that position once the TV reports it playing. The reload makes
+ * YouTube treat it as a fresh load whose ad decision has already been spent.
  */
 async function dodgeAd(trigger) {
   if (!remote.connected) throw new Error('Not connected to the TV');
   if (Q.currentIndex < 0 || !Q.items[Q.currentIndex]) throw new Error('Dodge needs the queue to be playing from this phone (use Play now first)');
   if (adRun.busy) return;
+  cancelDodgeWait();
   const s = ADS();
   adRun.busy = true;
   adRun.dodges += 1;
   const index = Q.currentIndex;
-  const position = Math.max(0, resumeTimeFor(index) + (resumeTimeFor(index) > 0 ? s.dodgeOffset : 0));
-  debug.log('app', `ad dodge #${adRun.dodges} (${trigger}): stopVideo, then reload #${index + 1} at ${Math.floor(position)}s`, { lastKnown: store.lastKnown });
+  const base = resumeTimeFor(index);
+  const position = base > 0 ? base + s.dodgeOffset : 0;
+  debug.log('app', `ad dodge #${adRun.dodges} (${trigger}, ad at ${Math.floor(remote.adElapsed())}s): ${s.dodgeExit ? 'stopVideo, ' : ''}reload #${index + 1} at ${Math.floor(position)}s`, { lastKnown: store.lastKnown });
   try {
-    await remote.stopVideo();
-    await new Promise((r) => setTimeout(r, 1500));
+    if (s.dodgeExit) {
+      await remote.stopVideo();
+      await new Promise((r) => setTimeout(r, 1500));
+    }
     await pushQueue(index, position);
     toast(`Reloaded to dodge the ad (${adRun.dodges}/${s.dodgeMax})`);
   } finally {
@@ -1297,6 +1350,7 @@ remote.addEventListener('player', () => {
       if (ADS().sponsorBlock) loadSponsorSegments(pl.videoId).catch(showError);
     }
   }
+  applyPendingSeek();
   rememberPosition();
   renderMini();
   renderQueue();
@@ -1456,9 +1510,10 @@ function renderTvView() {
     el('div', { class: 'panel' },
       el('h3', {}, 'Ads'),
       row('autoSkip', 'Skip ads automatically', 'Sends Skip the instant the TV reports the skip button is enabled.'),
-      row('dodge', 'Dodge ads by exiting and reloading', 'Your trick: on ad start, leave the player and reload the video at the saved position (+2 s past a mid-roll cue).'),
-      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then fall back to skipping.')), dodgeMax),
-      row('muteAds', 'Mute during ads', 'mute on ad start, unMute when it ends. The Xbox may ignore app-level mute; the log will show.'),
+      row('dodge', 'Dodge unskippable ads by reloading', 'Your trick: once an ad has played 5 s (earlier reloads do not take), reload the video at the saved position (+2 s past a mid-roll cue) and force a seek there. Skippable ads are skipped instead.'),
+      row('dodgeExit', 'Leave the player first', 'Send stopVideo (like pressing B) before the reload. Turn off to reload in place.'),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then the ad just plays (or gets skipped).')), dodgeMax),
+      row('muteAds', 'Mute during ads', 'Mutes the TV on ad start and unmutes when the ad ends.'),
       row('sponsorBlock', 'Skip sponsor segments (SponsorBlock)', 'Seeks past community-marked segments. Purple marks on the progress bar.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'SponsorBlock categories'),
         el('div', { class: 'row', style: 'margin:0; justify-content:flex-end' }, ...cats.map((c) => el('label', { class: 'chip', style: `height:28px;font-size:12px;${ads.sponsorCategories.includes(c) ? 'background:#fff;color:#000' : ''}` }, el('input', { type: 'checkbox', style: 'display:none', checked: ads.sponsorCategories.includes(c), onchange: (e) => { ads.sponsorCategories = e.target.checked ? [...ads.sponsorCategories, c] : ads.sponsorCategories.filter((x) => x !== c); store.saveSettings(); renderTvView(); } }), c)))),

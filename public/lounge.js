@@ -43,7 +43,7 @@ export class Remote extends EventTarget {
     this.session = null;
     this.screenName = '';
     this.player = this._emptyPlayer();
-    this.ad = { active: false, skipEnabled: false, title: '' };
+    this.ad = this._emptyAd();
     this.tvQueue = { listId: null, videoIds: [], currentIndex: -1 };
 
     this._generation = 0;
@@ -72,6 +72,16 @@ export class Remote extends EventTarget {
 
   get connected() {
     return this.status === 'connected';
+  }
+
+  _emptyAd() {
+    return { active: false, skipEnabled: false, title: '', adVideoId: null, duration: 0, adTime: 0, adAt: 0 };
+  }
+
+  /** Seconds the current ad has been playing, from the TV's last report plus wall clock. */
+  adElapsed() {
+    if (!this.ad.active) return 0;
+    return this.ad.adTime + (Date.now() - this.ad.adAt) / 1000;
   }
 
   _emit(name, detail) {
@@ -137,7 +147,7 @@ export class Remote extends EventTarget {
     log('app', `bound to TV (aid ${result.aid}, ${result.events.length} initial events)`);
     this.session = { ...session, sid: result.sid, gsessionid: result.gsessionid, aid: result.aid, rid: 2, ofs: 0 };
     this.player = this._emptyPlayer();
-    this.ad = { active: false, skipEnabled: false, title: '' };
+    this.ad = this._emptyAd();
     this.tvQueue = { listId: null, videoIds: [], currentIndex: -1 };
     for (const ev of result.events) this._handleEvent(ev);
     this._setStatus('connected');
@@ -366,11 +376,14 @@ export class Remote extends EventTarget {
   stopVideo() {
     return this.send('stopVideo');
   }
-  mute() {
-    return this.send('mute');
-  }
-  unMute() {
-    return this.send('unMute');
+  /**
+   * Mute/unmute. When the TV has told us its volume, use setVolume with the
+   * muted flag (iSponsorBlockTV: "YouTube wants the volume when unmuting");
+   * otherwise fall back to the bare mute/unMute commands.
+   */
+  setMuted(muted) {
+    if (this.player.volume !== null) return this.send('setVolume', { volume: this.player.volume, muted: muted ? 'true' : 'false' });
+    return this.send(muted ? 'mute' : 'unMute');
   }
   setAutoplay(enabled) {
     return this.send('setAutoplayMode', { autoplayMode: enabled ? 'ENABLED' : 'DISABLED' });
@@ -436,15 +449,27 @@ export class Remote extends EventTarget {
         return;
       }
       case 'adPlaying': {
-        this._setAd({ active: true, skipEnabled: p.isSkipEnabled === 'true', title: typeof p.adTitle === 'string' ? p.adTitle : this.ad.title });
+        // One adPlaying per ad in a break; a new adVideoId while an ad is already up is the next ad of the pod.
+        this._setAd({
+          active: true,
+          skipEnabled: p.isSkipEnabled === 'true',
+          title: typeof p.adTitle === 'string' ? p.adTitle : '',
+          adVideoId: typeof p.adVideoId === 'string' ? p.adVideoId : this.ad.adVideoId,
+          duration: num(p.duration),
+          adTime: num(p.currentTime),
+          adAt: Date.now(),
+        });
         this._emit('player');
         return;
       }
       case 'onAdStateChange': {
-        // adState "0" is YouTube telling us the ad finished; anything else means an ad is up.
-        const over = p.adState === '0' || p.adState === 'AD_STATE_NONE';
-        this._setAd({ active: !over, skipEnabled: !over && p.isSkipEnabled === 'true', title: this.ad.title });
-        if (p.currentTime !== undefined) pl.updatedAt = Date.now();
+        // adState "0" = ad over, BUT YouTube also sends adState 0 with currentTime 0 right before an
+        // ad starts (iSponsorBlockTV #295); that one is ignored.
+        if (p.adState === '0' || p.adState === 'AD_STATE_NONE') {
+          if (p.currentTime !== '0') this._setAd(this._emptyAd());
+        } else {
+          this._setAd({ ...this.ad, active: true, skipEnabled: p.isSkipEnabled === 'true', adTime: num(p.currentTime), adAt: Date.now() });
+        }
         this._emit('player');
         return;
       }
@@ -489,18 +514,19 @@ export class Remote extends EventTarget {
 
   _adFromState(state) {
     if (state === PLAYER_STATE.AD) {
-      if (!this.ad.active) this._setAd({ active: true, skipEnabled: false, title: '' });
+      if (!this.ad.active) this._setAd({ ...this._emptyAd(), active: true, adAt: Date.now() });
     } else if (state === PLAYER_STATE.AD_SKIPPED || state === PLAYER_STATE.PLAYING || state === PLAYER_STATE.PAUSED || state === PLAYER_STATE.ENDED || state === PLAYER_STATE.STOPPED) {
-      if (this.ad.active) this._setAd({ active: false, skipEnabled: false, title: '' });
+      if (this.ad.active) this._setAd(this._emptyAd());
     }
   }
 
-  /** Single place where ad state changes, so phase transitions are announced exactly once. */
+  /** Single place where ad state changes, so phase transitions are announced exactly once per ad. */
   _setAd(next) {
     const prev = this.ad;
     this.ad = next;
-    if (!prev.active && next.active) this._emit('ad', { phase: 'start' });
-    if (next.active && !prev.skipEnabled && next.skipEnabled) this._emit('ad', { phase: 'skippable' });
+    const newAd = next.active && (!prev.active || (next.adVideoId && prev.adVideoId && next.adVideoId !== prev.adVideoId));
+    if (newAd) this._emit('ad', { phase: 'start' });
+    if (next.active && (!prev.skipEnabled || newAd) && next.skipEnabled) this._emit('ad', { phase: 'skippable' });
     if (prev.active && !next.active) this._emit('ad', { phase: 'end' });
   }
 

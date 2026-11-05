@@ -40,6 +40,52 @@ installable to the Android home screen, and a built-in debug log.
 Everything under Library, plus rating and saving, needs your cookies: YouTube
 only answers those calls for a signed-in account.
 
+## Ads: what can be done over this protocol, and what MyTube does
+
+Research summary (Nov 2026; sources in the Prior art section):
+
+* **Only skippable ads can be skipped.** The Lounge `skipAd` command works
+  exactly when the TV shows the skip button (`onAdStateChange` /
+  `adPlaying` with `isSkipEnabled: "true"`). In an ad pod it skips one ad;
+  the next one is announced as its own `adPlaying`. MyTube's **Skip ads
+  automatically** (on by default) sends `skipAd` the instant the TV reports
+  the button, so you never hunt for it.
+* **Unskippable ads can be dodged by reloading.** An experimental
+  iSponsorBlockTV branch (`close-ads-5s`, Sept–Oct 2026) implements the
+  same trick you found by hand: once the ad has played **5 seconds** (any
+  earlier and the reload is ignored), load the video again at the saved
+  position. Two details matter: YouTube ignores the position in the reload
+  and restores its own stale saved time (10–20 s old), so a `seekTo` must
+  follow once the video reports playing; and testers see the occasional
+  second ad after a reload, so there is a per-video cap. MyTube's **Dodge
+  unskippable ads** does this, with your "press B first" step as the
+  default (`stopVideo` before the reload, switchable off), a cap of 2
+  reloads per video, and a 2 s offset past the point where the ad hit so a
+  mid-roll cue is not crossed again. Also available as a **Dodge** button
+  on the ad overlay. Untested on the Xbox itself; the log records every
+  step.
+* **Fake "ad ended" events.** Since spring 2025 YouTube sends
+  `onAdStateChange adState=0, currentTime=0` right before an ad starts.
+  MyTube ignores that one (as iSponsorBlockTV does), otherwise auto-skip
+  and mute would misfire.
+* **Mute during ads** sends `setVolume {volume, muted:true}` on ad start
+  and unmutes when the ad ends (iSponsorBlockTV's approach; whether the
+  Xbox app honours app-level mute is unknown, the log will show).
+* **SponsorBlock** (off by default): community-marked sponsor / self-promo /
+  interaction segments are seeked over, using the privacy-preserving
+  hashed-prefix lookup. Segments show as purple marks on the progress bar.
+  Categories are selectable in the TV tab.
+* **Not possible from here:** choosing shorter ads. 30-second unskippable
+  ads are a connected-TV-only format, and nothing in the Lounge protocol
+  influences which ads the TV client is served (`params` / `playerParams`
+  are undocumented and there is no evidence they matter). The phone app
+  gets shorter ads because it is a different client, not because of
+  anything the remote sends.
+* **Possible follow-up:** iSponsorBlockTV has an open PR that sends
+  `stopVideo` 0.1 s before the natural end of a video to avoid post-roll
+  ads; with our own queue that could become "jump to the next queued video
+  just before the end". Not implemented.
+
 ## Debugging: where the Xbox's "logs" actually are
 
 Nothing of ours runs on the Xbox and Google's YouTube app exposes no logs, so
@@ -155,6 +201,7 @@ kicks the TV out of the player (the app refuses to do that).
 | `GET /api/save-options?videoId=` | Your playlists with "already contains this video" flags |
 | `POST /api/playlist/edit {playlistId, videoId, action: add\|remove}` | Add to / remove from a playlist |
 | `POST /api/playlist/create {title, videoId?}` | New private playlist |
+| `GET /api/sponsorblock?id=` | SponsorBlock segments for a video (hashed-prefix lookup) |
 | `POST /api/lounge/pair {code}` | TV code → `screenId` + `loungeToken` |
 | `POST /api/lounge/refresh {screenId}` | New lounge token |
 | `POST /api/lounge/availability {loungeToken}` | Is the TV online |
@@ -186,7 +233,10 @@ Oct 2026), [ytlounge](https://github.com/desvaters/ytlounge) and
 Home Assistant integration
 [ha-youtube-on-tv](https://github.com/jorgediez/ha-youtube-on-tv). InnerTube
 parsing follows what yt-dlp, NewPipe Extractor and youtubei.js do today
-(including the 2025–2026 `lockupViewModel` migration).
+(including the 2025–2026 `lockupViewModel` migration). Ad handling follows
+[iSponsorBlockTV](https://github.com/dmunozv04/iSponsorBlockTV) (its
+`ytlounge.py`, issues #276, #295, #365, #411, #458, #489 and the
+`close-ads-5s` branch) and the Samsung observations in ha-youtube-on-tv.
 
 ## Caveats
 
