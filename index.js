@@ -225,16 +225,21 @@ async function api(req, res) {
 
 functions.http('mytube', async (req, res) => {
   try {
-    // If the phone holds the cookies, send back the refreshed copy so it never stores a stale one.
-    const fromPhone = req.get('X-YT-Cookies');
-    if (typeof fromPhone === 'string' && fromPhone.trim() && req.path.startsWith('/api/') && !req.path.startsWith('/api/lounge/')) {
-      const seed = innertube.normaliseCookies(decodeURIComponent(fromPhone));
-      const origJson = res.end.bind(res);
-      res.end = (chunk, ...rest) => {
-        const latest = innertube.currentCookies(seed);
-        if (!res.headersSent && latest && latest !== seed) res.set('X-YT-Cookies-Updated', encodeURIComponent(latest));
-        return origJson(chunk, ...rest);
-      };
+    // The phone is the long-term keeper of the cookies, so the server can scale to zero.
+    // Every API response carries the current (possibly just-rotated) copy back whenever it
+    // differs from what the phone sent. YT_COOKIES only seeds a phone that has none yet.
+    if (req.path.startsWith('/api/') && !req.path.startsWith('/api/lounge/')) {
+      const sent = req.get('X-YT-Cookies');
+      const sentSeed = typeof sent === 'string' && sent.trim() ? innertube.normaliseCookies(decodeURIComponent(sent)) : '';
+      const seed = cookiesFor(req);
+      if (seed) {
+        const origEnd = res.end.bind(res);
+        res.end = (chunk, ...rest) => {
+          const latest = innertube.currentCookies(seed);
+          if (!res.headersSent && latest && latest !== sentSeed) res.set('X-YT-Cookies-Updated', encodeURIComponent(latest));
+          return origEnd(chunk, ...rest);
+        };
+      }
     }
     if (req.path.startsWith('/api/')) await api(req, res);
     else if (req.method === 'GET' || req.method === 'HEAD') serveStatic(req, res);

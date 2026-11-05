@@ -32,10 +32,11 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
     throw e;
   }
   const updated = res.headers.get('X-YT-Cookies-Updated');
-  if (updated && store.settings.cookies) {
+  if (updated) {
+    const first = !store.settings.cookies;
     store.settings.cookies = decodeURIComponent(updated);
     store.saveSettings();
-    log('app', 'stored refreshed YouTube cookies from the server');
+    log('app', first ? 'adopted YouTube cookies from the server; this phone keeps them from now on' : 'stored refreshed YouTube cookies from the server');
   }
   const text = await res.text();
   let json;
