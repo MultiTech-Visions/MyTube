@@ -13,6 +13,7 @@
  *   'error'    a recoverable error happened    { error }
  */
 import { api, ApiError } from './api.js';
+import { log } from './debug.js';
 
 export const PLAYER_STATE = { STOPPED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5, AD: 1081, AD_SKIPPED: 1082 };
 
@@ -79,6 +80,7 @@ export class Remote extends EventTarget {
   _setStatus(status, detail = '') {
     this.status = status;
     this.statusDetail = detail;
+    log('status', `${status}${detail ? ` — ${detail}` : ''}`);
     this._emit('status', { status, detail });
   }
 
@@ -124,12 +126,14 @@ export class Remote extends EventTarget {
       result = await api('/api/lounge/connect', { method: 'POST', body: session });
     } catch (e) {
       if (e instanceof ApiError && e.code === 'TOKEN_EXPIRED' && allowRefresh) {
+        log('app', 'lounge token expired during bind; refreshing and retrying');
         await this._refreshToken();
         return this._bind(gen, false);
       }
       throw e;
     }
     if (gen !== this._generation) return; // superseded by a newer connect/disconnect
+    log('app', `bound to TV (aid ${result.aid}, ${result.events.length} initial events)`);
     this.session = { ...session, sid: result.sid, gsessionid: result.gsessionid, aid: result.aid, rid: 2, ofs: 0 };
     this.player = this._emptyPlayer();
     this.ad = { active: false, skipEnabled: false, title: '' };
@@ -198,6 +202,7 @@ export class Remote extends EventTarget {
         }
         if (!alive()) return;
         const code = e instanceof ApiError ? e.code : null;
+        log('error', `event stream failed: ${e.message}`, { code });
         try {
           if (code === 'SESSION_LOST') {
             await this._rebind();
@@ -283,17 +288,24 @@ export class Remote extends EventTarget {
   }
 
   async _send(name, params, allowRecover) {
-    if (!this.connected || !this.session) throw new Error(`Not connected to the TV (tried to send ${name})`);
+    if (!this.connected || !this.session) {
+      log('error', `command ${name} while not connected`, params);
+      throw new Error(`Not connected to the TV (tried to send ${name})`);
+    }
     const s = this.session;
     const payload = { session: { ...s }, commands: [{ name, params }] };
     s.rid += 1;
     s.ofs += 1;
+    const started = Date.now();
     try {
       const result = await api('/api/lounge/command', { method: 'POST', body: payload });
+      log('cmd', `${name} ok (${Date.now() - started} ms, rid ${s.rid}, ofs ${s.ofs})`, params);
       for (const ev of result.events) this._handleEvent(ev);
       return result;
     } catch (e) {
+      log('error', `${name} failed: ${e.message}`, { params, code: e.code });
       if (e instanceof ApiError && allowRecover && (e.code === 'SESSION_LOST' || e.code === 'TOKEN_EXPIRED')) {
+        log('app', `recovering from ${e.code}: rebinding and retrying ${name}`);
         if (e.code === 'TOKEN_EXPIRED') await this._refreshToken();
         this._abortStream();
         await this._rebind();
@@ -367,6 +379,7 @@ export class Remote extends EventTarget {
   _handleEvent(ev) {
     if (this.session && typeof ev.id === 'number' && ev.id > this.session.aid) this.session.aid = ev.id;
     const p = ev.payload && typeof ev.payload === 'object' ? ev.payload : {};
+    if (ev.name !== 'noop') log('event', `${ev.name} #${ev.id}`, ev.payload);
     const pl = this.player;
     switch (ev.name) {
       case 'noop':

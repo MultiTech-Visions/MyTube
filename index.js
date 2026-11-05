@@ -7,6 +7,7 @@
  *   GET  /api/feed              Home recommendations        ?continuation=
  *   GET  /api/search            Search                      ?q=  ?continuation=
  *   GET  /api/watch             Video info+chapters+related ?id= ?continuation=
+ *   GET  /api/comments          Comments / replies          ?continuation=
  *   POST /api/lounge/pair       { code }                     -> screen + lounge token
  *   POST /api/lounge/refresh    { screenId }                 -> new lounge token
  *   POST /api/lounge/availability { loungeToken }            -> { online }
@@ -123,6 +124,9 @@ async function api(req, res) {
       const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
       const id = cont ? '' : requireString(req.query, 'id', 'query');
       return sendJson(res, 200, await innertube.watch(cookiesFor(req), id, cont));
+    }
+    case 'GET /api/comments': {
+      return sendJson(res, 200, await innertube.comments(cookiesFor(req), requireString(req.query, 'continuation', 'query')));
     }
     case 'POST /api/lounge/pair': {
       const body = jsonBody(req);

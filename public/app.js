@@ -6,10 +6,11 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
-import { api, feed as apiFeed, search as apiSearch, watch as apiWatch } from './api.js';
+import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments } from './api.js';
 import { store } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
 import { icon } from './icons.js';
+import * as debug from './debug.js';
 
 // ---------------------------------------------------------------------------
 // Tiny DOM helpers
@@ -50,7 +51,7 @@ function toast(message, { error = false, ms } = {}) {
   toastTimer = setTimeout(() => (t.hidden = true), ms || (error ? 7000 : 3000));
 }
 function showError(e) {
-  console.error(e);
+  debug.log('error', `${e && e.message ? e.message : String(e)}`, e && e.code ? { code: e.code, detail: e.detail } : e && e.stack ? e.stack.split('\n').slice(0, 4).join(' | ') : undefined);
   const code = e && e.code ? ` [${e.code}]` : '';
   toast(`${e && e.message ? e.message : String(e)}${code}`, { error: true });
 }
@@ -67,6 +68,9 @@ const ui = {
   watch: { videoId: null, data: null, loading: false, related: [], relatedContinuation: null },
   npTab: 'queue',
   npOpen: false,
+  descOpen: false,
+  /** comments for the current video: { videoId, items, continuation, loading, replies: Map } */
+  comments: null,
   sheetVideo: null,
   scrubbing: false,
   /** true once THIS remote started the TV's playlist (queue commands are ignored otherwise on Xbox). */
@@ -99,6 +103,7 @@ $('#np-prev').innerHTML = icon('prev');
 $('#np-next').innerHTML = icon('next');
 $('#np-back').innerHTML = icon('back10');
 $('#np-fwd').innerHTML = icon('fwd10');
+$('#debug-close').innerHTML = icon('close');
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -272,6 +277,7 @@ function resumeTimeFor(index) {
 async function pushQueue(index, seconds) {
   if (Q.items.length === 0) throw new Error('The queue is empty');
   if (!remote.connected) throw new Error('Not connected to the TV. Open the TV tab to connect.');
+  debug.log('app', `pushQueue: ${Q.items.length} videos, start #${index + 1} at ${Math.floor(seconds)}s`, Q.items.map((it) => it.videoId));
   await remote.setPlaylist(Q.items.map((it) => it.videoId), index, seconds);
   ui.owned = true;
   ui.stale = false;
@@ -286,6 +292,7 @@ function tvQueueIsOurs() {
 }
 
 async function playNow(v) {
+  debug.log('app', `playNow ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned });
   store.rememberVideo(v);
   removeDuplicate(v.videoId);
   const at = insertAfterCurrent(queueItem(v));
@@ -300,6 +307,7 @@ async function playNow(v) {
 }
 
 async function playNext(v) {
+  debug.log('app', `playNext ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
   removeDuplicate(v.videoId);
@@ -310,6 +318,7 @@ async function playNext(v) {
 }
 
 async function addToQueue(v) {
+  debug.log('app', `addToQueue ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
   removeDuplicate(v.videoId);
@@ -339,6 +348,7 @@ async function syncAddition(v, index, command) {
   }
   if (pl.videoId) {
     // The TV is playing something this remote did not start; adopt it so the queue continues after it.
+    debug.log('app', `taking over the TV queue (TV is playing ${pl.videoId}, not started by us)`);
     let cur = Q.items.findIndex((it) => it.videoId === pl.videoId);
     if (cur === -1) {
       const known = store.video(pl.videoId);
@@ -356,6 +366,7 @@ async function syncAddition(v, index, command) {
 async function removeFromQueue(index) {
   const it = Q.items[index];
   if (!it) return;
+  debug.log('app', `remove #${index + 1} ${it.videoId}`, { owned: ui.owned });
   if (index === Q.currentIndex && remote.player.videoId === it.videoId) throw new Error('That video is playing now. Use Next to skip it.');
   Q.items.splice(index, 1);
   if (index < Q.currentIndex) Q.currentIndex -= 1;
@@ -365,6 +376,7 @@ async function removeFromQueue(index) {
 }
 
 async function jumpTo(index) {
+  debug.log('app', `jump to #${index + 1}`);
   if (!remote.connected) {
     Q.currentIndex = index;
     saveQueue();
@@ -387,6 +399,7 @@ function move(index, delta) {
 
 function clearQueue() {
   if (!confirm('Clear the whole queue? The TV keeps playing the current video.')) return;
+  debug.log('app', 'queue cleared by user');
   Q.items = [];
   Q.currentIndex = -1;
   ui.owned = false;
@@ -407,6 +420,7 @@ function syncCurrentFromTv() {
     return;
   }
   // Something we did not queue is playing (autoplay or picked on the TV). Keep it in the list so the history is visible.
+  debug.log('app', `TV is playing ${pl.videoId}, which is not in the local queue; inserting it`, { tvQueue: remote.tvQueue });
   const known = store.video(pl.videoId);
   const item = known ? { ...known } : { videoId: pl.videoId, title: 'Loading…', channel: '', duration: '', thumbnail: `https://i.ytimg.com/vi/${pl.videoId}/mqdefault.jpg` };
   item.fromTv = true;
@@ -464,6 +478,7 @@ function renderQueue() {
   const tvDiffers = remote.connected && ui.owned && remote.player.videoId && remote.tvQueue.videoIds.length > 0 && remote.tvQueue.videoIds.join() !== Q.items.map((it) => it.videoId).join();
   pushBtn.hidden = !(remote.connected && Q.items.length > 0);
   if (tvEmpty) {
+    if (notice.hidden) debug.log('app', 'TV reports an empty queue while the phone has one — offering Restore', { local: Q.items.map((it) => it.videoId), tvQueue: remote.tvQueue });
     notice.hidden = false;
     notice.className = 'notice warn';
     notice.replaceChildren(el('span', {}, 'The TV lost the queue. Your copy is safe here.'), el('button', { class: 'btn small', onclick: guard(restoreQueue) }, 'Restore on TV'));
@@ -481,6 +496,7 @@ $('#btn-queue-push').addEventListener('click', guard(() => pushQueue(Math.max(0,
 
 async function restoreQueue() {
   const index = Math.max(0, Math.min(Q.currentIndex, Q.items.length - 1));
+  debug.log('app', `restoreQueue at #${index + 1}`, { lastKnown: store.lastKnown });
   await pushQueue(index, resumeTimeFor(index));
   toast('Queue restored on the TV');
 }
@@ -529,6 +545,49 @@ function openNowPlaying() {
   $('#np').hidden = false;
   document.body.style.overflow = 'hidden';
   renderNowPlaying();
+}
+$('#np-meta').addEventListener('click', () => {
+  ui.descOpen = !ui.descOpen;
+  renderDescription();
+});
+
+/** Turns plain text into text nodes with clickable http(s) links. */
+function linkify(textValue) {
+  const frag = document.createDocumentFragment();
+  const re = /https?:\/\/[^\s<>"']+/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(textValue)) !== null) {
+    if (m.index > last) frag.append(textValue.slice(last, m.index));
+    const url = m[0].replace(/[.,;:!?)]+$/, '');
+    frag.append(el('a', { href: url, target: '_blank', rel: 'noopener' }, url));
+    last = m.index + url.length;
+  }
+  if (last < textValue.length) frag.append(textValue.slice(last));
+  return frag;
+}
+
+function renderDescription() {
+  const vid = remote.player.videoId;
+  const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
+  const box = $('#np-desc');
+  $('#np-more').hidden = !data;
+  if (!data || !ui.descOpen) {
+    box.hidden = true;
+    $('#np-more').textContent = '…more';
+    return;
+  }
+  $('#np-more').textContent = 'less';
+  box.hidden = false;
+  const textBox = $('#np-desc-text');
+  textBox.replaceChildren(data.video.description ? linkify(data.video.description) : el('span', { class: 'empty' }, 'No description.'));
+  const seen = new Set();
+  const links = data.video.links.filter((l) => (seen.has(l.url) ? false : seen.add(l.url)));
+  const list = $('#np-links');
+  list.replaceChildren(
+    ...(links.length ? [el('h4', {}, `Links (${links.length})`)] : []),
+    ...links.map((l) => el('a', { href: l.url, target: '_blank', rel: 'noopener' }, l.text.trim() && l.text.trim() !== l.url ? [l.text.trim(), el('span', {}, l.url)] : l.url))
+  );
 }
 function closeNowPlaying() {
   ui.npOpen = false;
@@ -592,7 +651,8 @@ function renderNowPlaying() {
   const item = vid ? Q.items.find((it) => it.videoId === vid) || store.video(vid) : currentItem() || Q.items[0];
   const title = data ? data.video.title : item ? item.title : vid ? 'Loading…' : 'Nothing playing';
   $('#np-title').textContent = title;
-  $('#np-sub').textContent = data ? joinMeta(data.video.channel, data.video.views, data.video.published) : item ? joinMeta(item.channel, item.duration) : '';
+  $('#np-sub-text').textContent = data ? joinMeta(data.video.channel, data.video.views, data.video.published) : item ? joinMeta(item.channel, item.duration) : '';
+  renderDescription();
   $('#np-thumb').src = vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : item ? item.thumbnail : '';
   $('#np-play').innerHTML = icon(pl.state === PLAYER_STATE.PLAYING || pl.state === PLAYER_STATE.AD ? 'pause' : 'play');
   $('#np-state').textContent = !remote.connected ? 'Not connected' : !vid ? 'TV idle' : pl.state === PLAYER_STATE.PAUSED ? 'Paused' : pl.state === PLAYER_STATE.BUFFERING ? 'Buffering' : pl.state === PLAYER_STATE.ENDED ? 'Ended' : '';
@@ -624,10 +684,112 @@ function renderNpTabs() {
   $('#np-queue').hidden = ui.npTab !== 'queue';
   $('#np-related').hidden = ui.npTab !== 'related';
   $('#np-chapters').hidden = ui.npTab !== 'chapters';
-  $('#np-loading').hidden = !(ui.watch.loading && ui.npTab !== 'queue');
+  $('#np-comments').hidden = ui.npTab !== 'comments';
+  $('#np-loading').hidden = !((ui.watch.loading && ui.npTab !== 'queue') || (ui.npTab === 'comments' && ui.comments && ui.comments.loading && ui.comments.items.length === 0));
   if (ui.npTab === 'queue') renderNpQueue();
   if (ui.npTab === 'related') renderRelated();
   if (ui.npTab === 'chapters') renderChapters();
+  if (ui.npTab === 'comments') renderComments();
+}
+
+// ---------------------------------------------------------------------------
+// Comments
+// ---------------------------------------------------------------------------
+function commentNode(c, isReply) {
+  const head = el('div', { class: 'comment-head' }, el('b', {}, c.author), c.isCreator ? el('span', { class: 'creator' }, 'creator') : null, el('span', {}, c.published), c.hearted ? el('span', { title: 'Hearted by the creator' }, '❤') : null);
+  const meta = el('div', { class: 'comment-meta' }, c.likes ? el('span', {}, `👍 ${c.likes}`) : null);
+  const body = el('div', { class: 'comment-body' }, c.pinned ? el('div', { class: 'comment-pinned' }, c.pinned) : null, head, el('div', { class: 'comment-text' }, linkify(c.text)), meta);
+  const node = el('div', { class: `comment${isReply ? ' reply' : ''}` }, el('img', { class: 'comment-avatar', src: c.authorAvatar, alt: '', loading: 'lazy' }), body);
+  if (!isReply && c.repliesContinuation) {
+    const state = ui.comments.replies.get(c.commentId);
+    const btn = el('button', { type: 'button', onclick: guard(() => toggleReplies(c)) }, state && state.open ? 'Hide replies' : `${c.replyCount || ''} replies`.trim());
+    meta.append(btn);
+    if (state && state.open) {
+      const wrap = el('div', {});
+      wrap.append(...state.items.map((r) => commentNode(r, true)));
+      if (state.continuation) wrap.append(el('button', { class: 'btn ghost small', style: 'margin:4px 16px 8px 56px', onclick: guard(() => loadReplies(c, true)) }, state.loading ? 'Loading…' : 'More replies'));
+      return el('div', {}, node, wrap);
+    }
+  }
+  return node;
+}
+
+function renderComments() {
+  const box = $('#np-comments');
+  const vid = remote.player.videoId;
+  if (!vid) {
+    box.replaceChildren(el('p', { class: 'empty' }, 'Comments appear once something is playing.'));
+    return;
+  }
+  const data = ui.watch.videoId === vid ? ui.watch.data : null;
+  if (!data) {
+    box.replaceChildren();
+    return;
+  }
+  if (!ui.comments || ui.comments.videoId !== vid) {
+    ui.comments = { videoId: vid, items: [], continuation: data.commentsContinuation, loading: false, replies: new Map() };
+    if (!data.commentsContinuation) {
+      box.replaceChildren(el('p', { class: 'empty' }, 'Comments are turned off for this video.'));
+      return;
+    }
+    loadComments().catch(showError);
+    return;
+  }
+  const c = ui.comments;
+  const nodes = c.items.map((it) => commentNode(it, false));
+  if (c.continuation) nodes.push(el('button', { class: 'btn ghost', onclick: guard(loadComments) }, c.loading ? 'Loading…' : 'More comments'));
+  if (c.items.length === 0 && !c.loading) nodes.push(el('p', { class: 'empty' }, 'No comments.'));
+  box.replaceChildren(...nodes);
+}
+
+async function loadComments() {
+  const c = ui.comments;
+  if (!c || c.loading || !c.continuation) return;
+  c.loading = true;
+  renderNpTabs();
+  try {
+    const res = await apiComments(c.continuation);
+    if (ui.comments !== c) return; // video changed meanwhile
+    c.items = c.items.concat(res.items);
+    c.continuation = res.continuation;
+  } finally {
+    c.loading = false;
+    if (ui.comments === c && ui.npOpen && ui.npTab === 'comments') renderNpTabs();
+  }
+}
+
+async function toggleReplies(comment) {
+  const state = ui.comments.replies.get(comment.commentId);
+  if (state && state.open) {
+    state.open = false;
+    renderComments();
+    return;
+  }
+  if (state) {
+    state.open = true;
+    renderComments();
+    return;
+  }
+  await loadReplies(comment, false);
+}
+
+async function loadReplies(comment, more) {
+  let state = ui.comments.replies.get(comment.commentId);
+  if (!state) {
+    state = { open: true, items: [], continuation: comment.repliesContinuation, loading: false };
+    ui.comments.replies.set(comment.commentId, state);
+  }
+  if (state.loading || !state.continuation) return;
+  state.loading = true;
+  renderComments();
+  try {
+    const res = await apiComments(state.continuation);
+    state.items = state.items.concat(res.items);
+    state.continuation = res.continuation;
+  } finally {
+    state.loading = false;
+    renderComments();
+  }
 }
 function renderNpQueue() {
   const list = $('#np-queue');
@@ -755,7 +917,10 @@ let lastVideoId = null;
 remote.addEventListener('player', () => {
   const pl = remote.player;
   if (pl.videoId !== lastVideoId) {
+    debug.log('app', `TV video changed: ${lastVideoId} → ${pl.videoId}`, { state: pl.state, currentIndex: pl.currentIndex, listId: pl.listId });
     lastVideoId = pl.videoId;
+    ui.comments = null;
+    ui.descOpen = false;
     if (pl.videoId) {
       syncCurrentFromTv();
       loadWatch(pl.videoId).catch(showError);
@@ -776,9 +941,63 @@ setInterval(() => {
 }, 1000);
 
 document.addEventListener('visibilitychange', () => {
+  debug.log('app', `app ${document.visibilityState}`, { status: remote.status, tvVideo: remote.player.videoId, state: remote.player.state });
   if (document.visibilityState !== 'visible') return;
   if (remote.connected) remote.resume().catch(showError);
   else if (store.settings.screen && store.settings.autoConnect) remote.connect().catch(showError);
+});
+window.addEventListener('error', (e) => debug.log('error', `uncaught: ${e.message}`, e.error && e.error.stack ? e.error.stack.split('\n').slice(0, 4).join(' | ') : undefined));
+window.addEventListener('unhandledrejection', (e) => debug.log('error', `unhandled rejection: ${e.reason && e.reason.message ? e.reason.message : String(e.reason)}`));
+
+// ---------------------------------------------------------------------------
+// Debug log viewer
+// ---------------------------------------------------------------------------
+function debugContext() {
+  const screen = store.settings.screen;
+  return {
+    remoteStatus: `${remote.status}${remote.statusDetail ? ` (${remote.statusDetail})` : ''}`,
+    screen: screen ? { name: screen.name, screenId: screen.screenId, tokenExpires: screen.expiration ? new Date(screen.expiration).toISOString() : null } : null,
+    screenName: remote.screenName,
+    deviceName: store.settings.deviceName,
+    cookies: store.settings.cookies ? 'present' : 'none',
+    signedIn: ui.feed.signedIn,
+    player: remote.player,
+    ad: remote.ad,
+    tvQueue: remote.tvQueue,
+    localQueue: { currentIndex: Q.currentIndex, items: Q.items.map((it) => it.videoId), listId: Q.listId || null },
+    owned: ui.owned,
+    stale: ui.stale,
+    lastKnown: store.lastKnown,
+  };
+}
+function openDebug() {
+  $('#debug').hidden = false;
+  $('#debug-title').textContent = `Debug log (${debug.count()} entries)`;
+  const pre = $('#debug-text');
+  pre.textContent = debug.recent(400).join('\n');
+  pre.scrollTop = pre.scrollHeight;
+}
+$('#debug-close').addEventListener('click', () => ($('#debug').hidden = true));
+$('#debug-copy').addEventListener('click', guard(async () => {
+  await navigator.clipboard.writeText(debug.asText(debugContext()));
+  toast('Log copied. Paste it into the chat.');
+}));
+$('#debug-share').addEventListener('click', guard(async () => {
+  const text = debug.asText(debugContext());
+  const file = new File([text], `mytube-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`, { type: 'text/plain' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({ files: [file], title: 'MyTube debug log' });
+    return;
+  }
+  const a = el('a', { href: URL.createObjectURL(file), download: file.name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}));
+$('#debug-clear').addEventListener('click', () => {
+  if (!confirm('Clear the debug log?')) return;
+  debug.clear();
+  openDebug();
 });
 
 // ---------------------------------------------------------------------------
@@ -849,6 +1068,18 @@ function renderTvView() {
     )
   );
 
+  // --- Debug log
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Debug log'),
+      el('p', {}, `${debug.count()} entries on this phone: every TV event, every command and its result, errors, and what the app decided. Copy it and paste it into the chat when something misbehaves. Tokens and cookies are never included.`),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn ghost', onclick: openDebug }, 'View'),
+        el('button', { class: 'btn primary', onclick: guard(async () => { await navigator.clipboard.writeText(debug.asText(debugContext())); toast('Log copied. Paste it into the chat.'); }) }, 'Copy log')
+      )
+    )
+  );
+
   // --- Danger zone
   panels.push(
     el('div', { class: 'panel' },
@@ -879,6 +1110,7 @@ async function forgetTv() {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+debug.log('app', 'app start', { standalone: window.matchMedia('(display-mode: standalone)').matches, paired: Boolean(store.settings.screen), queue: Q.items.length });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(showError);
 renderTvChip();
 renderMini();

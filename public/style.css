@@ -212,3 +212,37 @@ ol.steps { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); font-size:
   main { max-width: 640px; margin: 0 auto; }
   .np, .sheet, .mini, .toast { max-width: 640px; margin-left: auto; margin-right: auto; }
 }
+
+/* Description, links */
+.np-meta { display: block; width: 100%; text-align: left; }
+.np-meta:active { background: rgba(255,255,255,.04); }
+.np-sub .more { color: var(--text); font-weight: 500; }
+.np-desc { padding: 0 16px 10px; }
+.np-desc-text { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 20px; color: var(--text); background: var(--surface); border-radius: 12px; padding: 12px; }
+.np-desc-text a, .comment-text a, .links a { color: #3ea6ff; text-decoration: none; word-break: break-all; }
+.links { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.links h4 { margin: 6px 0 2px; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.links a { display: block; padding: 8px 10px; border-radius: 8px; background: var(--surface); font-size: 13px; }
+.links a span { display: block; color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Comments */
+.comments { padding: 4px 0 16px; }
+.comment { display: flex; gap: 12px; padding: 10px 16px; }
+.comment.reply { padding-left: 56px; }
+.comment-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--surface-3); flex: none; }
+.comment.reply .comment-avatar { width: 26px; height: 26px; }
+.comment-body { flex: 1; min-width: 0; }
+.comment-head { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.comment-head b { color: var(--text); font-weight: 500; }
+.comment-head .creator { background: var(--surface-3); color: var(--text); padding: 1px 6px; border-radius: 10px; }
+.comment-pinned { font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.comment-text { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 20px; margin-top: 2px; }
+.comment-meta { display: flex; gap: 14px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--text-2); }
+.comment-meta button { color: #3ea6ff; font-weight: 500; font-size: 13px; padding: 6px 0; }
+.comments .btn.ghost { margin: 8px 16px; }
+
+/* Debug log viewer */
+.debug { position: fixed; inset: 0; background: var(--bg); z-index: 45; display: flex; flex-direction: column; padding-top: var(--safe-t); }
+.debug-actions { padding: 4px 12px 8px; }
+.debug-text { flex: 1; margin: 0; padding: 8px 12px calc(16px + var(--safe-b)); overflow: auto; font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; background: #000; }
+.tabs .tab { font-size: 14px; }

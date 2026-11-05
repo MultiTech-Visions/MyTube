@@ -4,6 +4,7 @@
  * exactly what went wrong instead of guessing.
  */
 import { store } from './store.js';
+import { log } from './debug.js';
 
 export class ApiError extends Error {
   constructor(status, code, message, detail) {
@@ -23,7 +24,13 @@ function cookieHeader() {
 export async function api(path, { method = 'GET', body, signal } = {}) {
   const headers = { ...cookieHeader() };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+  } catch (e) {
+    log('error', `${method} ${path.split('?')[0]} network failure: ${e.message}`);
+    throw e;
+  }
   const text = await res.text();
   let json;
   try {
@@ -33,8 +40,10 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
   }
   if (!res.ok) {
     if (!json.error || typeof json.error.message !== 'string') {
+      log('error', `${method} ${path.split('?')[0]} → HTTP ${res.status} without an error body`);
       throw new ApiError(res.status, 'UNKNOWN', `HTTP ${res.status} without an error body`, json);
     }
+    log('api', `${method} ${path.split('?')[0]} → ${res.status} ${json.error.code}: ${json.error.message}`, json.error.detail);
     throw new ApiError(res.status, json.error.code, json.error.message, json.error.detail);
   }
   return json;
@@ -45,3 +54,4 @@ export const search = (q, continuation) =>
   api(continuation ? `/api/search?continuation=${encodeURIComponent(continuation)}` : `/api/search?q=${encodeURIComponent(q)}`);
 export const watch = (videoId, continuation) =>
   api(continuation ? `/api/watch?continuation=${encodeURIComponent(continuation)}` : `/api/watch?id=${encodeURIComponent(videoId)}`);
+export const comments = (continuation) => api(`/api/comments?continuation=${encodeURIComponent(continuation)}`);

@@ -31,7 +31,31 @@ Features: Home recommendations (yours, via cookies), search, tap a video →
 big **Play now / Play next / Add to queue** buttons, now-playing screen with
 scrubbing, chapters (tap to seek, chapter gaps drawn on the bar), ±10 s, previous
 / next, autoplay toggle, queue with reorder/remove, related videos for whatever
-is playing, mini player, installable to the Android home screen.
+is playing, full description with every link resolved (YouTube hides real URLs
+behind redirects and truncates them), comments with replies, mini player,
+installable to the Android home screen, and a built-in debug log.
+
+## Debugging: where the Xbox's "logs" actually are
+
+Nothing of ours runs on the Xbox and Google's YouTube app exposes no logs, so
+there is nothing to pull off the console. There is also no need to: every
+change on the Xbox (play/pause, position, ad started, skip available, queue
+changed, disconnect reason) is relayed by YouTube to the phone as a Lounge
+event. The phone therefore holds the complete record. **TV tab → Debug log**
+keeps the last 800 entries, persisted across restarts and crashes:
+
+* every event from the TV with its payload (`event nowPlaying #42 {...}`)
+* every command sent, how long it took, and the channel counters (`cmd addVideo ok (210 ms, rid 7, ofs 5)`)
+* every API/server error with the server's code and detail
+* what the app decided and why (`app taking over the TV queue …`, `app TV reports an empty queue …`)
+* app foreground/background transitions, connection status changes
+
+**Copy log** puts the whole thing (plus a snapshot of player state, local queue,
+TV queue, token expiry) on the clipboard for pasting into the chat; **Share /
+save** hands it to any app as a text file. Lounge tokens, session ids and
+cookies are redacted before storage. Server-side failures are also in Cloud Run
+→ Logs (anything the server could not map to a known error code is logged
+with its stack).
 
 ## Deploy on Cloud Run (inline editor)
 
@@ -54,6 +78,7 @@ is playing, mini player, installable to the Android home screen.
    public/store.js
    public/lounge.js
    public/icons.js
+   public/debug.js
    public/manifest.webmanifest
    public/sw.js
    public/icons/icon-192.png  icon-512.png  maskable-192.png  maskable-512.png
@@ -116,7 +141,8 @@ kicks the TV out of the player (the app refuses to do that).
 | --- | --- |
 | `GET /api/feed[?continuation=]` | Home recommendations |
 | `GET /api/search?q=` / `?continuation=` | Search |
-| `GET /api/watch?id=` / `?continuation=` | Title, channel, description, chapters, related list |
+| `GET /api/watch?id=` / `?continuation=` | Title, channel, full description + resolved links, chapters, related list, comments continuation |
+| `GET /api/comments?continuation=` | One page of comments, or of a thread's replies (`repliesContinuation`) |
 | `POST /api/lounge/pair {code}` | TV code → `screenId` + `loungeToken` |
 | `POST /api/lounge/refresh {screenId}` | New lounge token |
 | `POST /api/lounge/availability {loungeToken}` | Is the TV online |

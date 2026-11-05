@@ -82,7 +82,7 @@
     <div class="np-head">
       <button class="iconbtn" id="np-close" aria-label="Collapse"></button>
       <div class="np-screen" id="np-screen">Playing on TV</div>
-      <button class="iconbtn" id="np-more" aria-label="More" hidden></button>
+      <span class="iconbtn"></span>
     </div>
     <div class="np-art">
       <img id="np-thumb" alt="">
@@ -92,9 +92,13 @@
       </div>
       <div class="np-state" id="np-state"></div>
     </div>
-    <div class="np-meta">
+    <button class="np-meta" id="np-meta" type="button">
       <div class="np-title" id="np-title">Nothing playing</div>
-      <div class="np-sub" id="np-sub"></div>
+      <div class="np-sub" id="np-sub"><span id="np-sub-text"></span> <span class="more" id="np-more" hidden>…more</span></div>
+    </button>
+    <div class="np-desc" id="np-desc" hidden>
+      <div class="np-desc-text" id="np-desc-text"></div>
+      <div class="links" id="np-links"></div>
     </div>
     <div class="scrub" id="scrub">
       <div class="scrub-track" id="scrub-track"></div>
@@ -118,11 +122,13 @@
       <button class="tab active" data-tab="queue">Up next</button>
       <button class="tab" data-tab="related">Related</button>
       <button class="tab" data-tab="chapters">Chapters</button>
+      <button class="tab" data-tab="comments">Comments</button>
     </div>
     <div class="np-body">
       <div class="qlist" id="np-queue"></div>
       <div class="list compact" id="np-related" hidden></div>
       <div class="chapters" id="np-chapters" hidden></div>
+      <div class="comments" id="np-comments" hidden></div>
       <div class="loading" id="np-loading" hidden><span class="spinner"></span></div>
     </div>
   </section>
@@ -141,6 +147,21 @@
     <button class="btn action" id="sheet-playnext"><span class="ico" data-icon="playnext"></span>Play next</button>
     <button class="btn action" id="sheet-addqueue"><span class="ico" data-icon="addqueue"></span>Add to queue</button>
     <button class="btn ghost" id="sheet-cancel">Cancel</button>
+  </section>
+
+  <!-- Debug log viewer -->
+  <section class="debug" id="debug" hidden>
+    <div class="np-head">
+      <button class="iconbtn" id="debug-close" aria-label="Close"></button>
+      <div class="np-screen" id="debug-title">Debug log</div>
+      <span></span>
+    </div>
+    <div class="row gap debug-actions">
+      <button class="btn small" id="debug-copy">Copy</button>
+      <button class="btn small ghost" id="debug-share">Share / save</button>
+      <button class="btn small ghost danger" id="debug-clear">Clear</button>
+    </div>
+    <pre class="debug-text" id="debug-text"></pre>
   </section>
 
   <div class="toast" id="toast" hidden></div>
