@@ -31,6 +31,7 @@
 
 const functions = require('@google-cloud/functions-framework');
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const innertube = require('./lib/innertube');
 const sponsorblock = require('./lib/sponsorblock');
@@ -70,9 +71,20 @@ function serveStatic(req, res) {
   if (!(ext in MIME)) throw new HttpError(404, 'NOT_FOUND', 'Not found');
   res.status(200);
   res.set('Content-Type', MIME[ext]);
-  // index.html and the service worker must never be served stale after a redeploy.
-  res.set('Cache-Control', ext === '.html' || target.endsWith('sw.js') ? 'no-cache' : 'public, max-age=3600');
-  res.end(fs.readFileSync(target));
+  // App code must never be served stale after a redeploy: a new app.js with an old icons.js breaks
+  // the page. Code revalidates every time (ETag keeps that cheap); only images may be cached.
+  const isCode = ext === '.html' || ext === '.js' || ext === '.css' || ext === '.json' || ext === '.webmanifest';
+  const body = fs.readFileSync(target);
+  // Content hash, not mtime: container builds can stamp every file with the same time.
+  const etag = `"${crypto.createHash('sha1').update(body).digest('base64url').slice(0, 16)}"`;
+  res.set('ETag', etag);
+  res.set('Cache-Control', isCode ? 'no-cache' : 'public, max-age=86400');
+  if (req.get('If-None-Match') === etag) {
+    res.status(304);
+    res.end();
+    return;
+  }
+  res.end(body);
 }
 
 // ---------------------------------------------------------------------------
