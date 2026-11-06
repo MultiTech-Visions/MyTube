@@ -457,6 +457,7 @@ async function playNow(v) {
   const at = insertAfterCurrent(queueItem(v));
   Q.currentIndex = at;
   saveQueue();
+  if (!remote.connected && store.settings.screen) await remote.connect(); // e.g. after "Done — shut down"
   if (!remote.connected) {
     toast('Queued. Connect to the TV to play it.');
     return;
@@ -846,6 +847,21 @@ $('#np-back').addEventListener('click', guard(() => remote.seekBy(-10)));
 $('#np-fwd').addEventListener('click', guard(() => remote.seekBy(10)));
 $('#np-skip').addEventListener('click', guard(() => remote.skipAd()));
 $('#np-dodge').addEventListener('click', guard(() => dodgeAd()));
+
+/**
+ * "Done": closes the server's TV session right away (its keep-alive stops, so
+ * Cloud Run can scale to zero) and stops the phone notification. The app does
+ * not auto-reconnect until you connect again or press Play now.
+ */
+async function shutDown() {
+  ui.shutDown = true;
+  debug.log('app', 'shut down pressed');
+  closeNowPlaying();
+  media.stop();
+  await remote.disconnect();
+  toast('Shut down. The server will sleep now.');
+}
+$('#np-done').addEventListener('click', guard(shutDown));
 
 // ---------------------------------------------------------------------------
 // Ad strategies: auto-skip, dodge (exit + reload), mute, SponsorBlock
@@ -1574,6 +1590,7 @@ function renderTvChip() {
 }
 
 remote.addEventListener('status', () => {
+  if (remote.status === 'connected') ui.shutDown = false;
   if (remote.status !== 'connected') ui.owned = false;
   syncMedia();
   renderTvChip();
@@ -1632,7 +1649,7 @@ document.addEventListener('visibilitychange', () => {
   debug.log('app', `app ${document.visibilityState}`, { status: remote.status, tvVideo: remote.player.videoId, state: remote.player.state });
   if (document.visibilityState !== 'visible') return;
   if (remote.connected) remote.resume().catch(showError);
-  else if (store.settings.screen && store.settings.autoConnect) remote.connect().catch(showError);
+  else if (store.settings.screen && store.settings.autoConnect && !ui.shutDown) remote.connect().catch(showError);
 });
 window.addEventListener('error', (e) => debug.log('error', `uncaught: ${e.message}`, e.error && e.error.stack ? e.error.stack.split('\n').slice(0, 4).join(' | ') : undefined));
 window.addEventListener('unhandledrejection', (e) => debug.log('error', `unhandled rejection: ${e.reason && e.reason.message ? e.reason.message : String(e.reason)}`));
@@ -1711,7 +1728,7 @@ function renderTvView() {
         el('div', { class: 'kv' }, 'Token valid until', el('b', {}, screen.expiration ? new Date(screen.expiration).toLocaleString() : 'unknown')),
         el('div', { class: 'row' },
           remote.connected
-            ? el('button', { class: 'btn ghost', onclick: guard(() => remote.disconnect()) }, 'Disconnect')
+            ? el('button', { class: 'btn ghost danger', onclick: guard(shutDown) }, 'Done — shut down')
             : el('button', { class: 'btn primary', disabled: remote.status === 'connecting', onclick: guard(() => remote.connect()) }, 'Connect'),
           el('button', { class: 'btn ghost', onclick: guard(checkAvailability) }, 'Is the TV online?'),
           el('button', { class: 'btn ghost danger', onclick: guard(forgetTv) }, 'Forget TV')

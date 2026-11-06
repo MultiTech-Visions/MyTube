@@ -180,9 +180,11 @@ buttons. That needs:
 * **Request timeout = 600 s or more.** While you watch, the server keeps one
   request open to itself (`/api/remote/hold`, renewed every 9 minutes) so
   Cloud Run keeps its CPU running with ordinary request-based billing.
-* **Minimum instances = 0 is fine.** The session closes itself 15 minutes
-  after the TV goes idle and no phone has been in contact; then the keep-
-  alive stops and Cloud Run scales to zero.
+* **Minimum instances = 0 is fine.** Press **Done — shut down** (Now
+  Playing screen, or the TV tab) when you finish: the session closes at once,
+  the keep-alive stops, and Cloud Run scales to zero. If you forget, the
+  session closes itself 15 minutes after the TV goes idle with no phone
+  contact. Play now reconnects automatically next time.
 
 Cloud Run → Logs shows every `[session …]` line (ad start, dodge armed,
 dodge, forced seek, keep-alive), and the same lines appear in the phone's
