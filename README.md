@@ -47,6 +47,12 @@ next, previous and seek. Android only shows that for a page playing audio, so
 the app plays silence; it starts on your first tap after the TV starts
 playing.
 
+**Channel pages:** every video card shows the channel's avatar left of the
+title; tap it for the channel page (banner, avatar, handle, subscribers,
+video count, description), with **Videos** (Latest / Popular / Oldest),
+**Playlists** (open one, Play all / Queue all) and **Search** within the
+channel. The phone's Back button closes it.
+
 **Swipe on any video card** (Home, Subs, Search, Related, Watch later):
 swipe right to add it to the queue, swipe left to get rid of it (hidden for
 good on Home/Subs, plus YouTube's "Not interested" when offered; removed from
@@ -275,6 +281,7 @@ kicks the TV out of the player (the app refuses to do that).
 | `GET /api/save-options?videoId=` | Your playlists with "already contains this video" flags |
 | `POST /api/playlist/edit {playlistId, videoId, action: add\|remove}` | Add to / remove from a playlist |
 | `POST /api/playlist/create {title, videoId?}` | New private playlist |
+| `GET /api/channel?id=&tab=videos\|playlists\|search[&q=]` / `?continuation=` | Channel header, videos with sort options, playlists, search |
 | `GET /api/sponsorblock?id=` | SponsorBlock segments for a video (hashed-prefix lookup) |
 | `POST /api/lounge/pair {code}` | TV code → `screenId` + `loungeToken` |
 | `POST /api/lounge/refresh {screenId}` | New lounge token |
