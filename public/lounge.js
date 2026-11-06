@@ -16,6 +16,8 @@
 import { api, ApiError } from './api.js';
 import { log } from './debug.js';
 
+const QUEUE_COMMANDS = new Set(['addVideo', 'insertVideo', 'removeVideo', 'setPlaylist', 'stopVideo']);
+
 export const PLAYER_STATE = { STOPPED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5, AD: 1081, AD_SKIPPED: 1082 };
 
 const num = (v) => {
@@ -31,8 +33,9 @@ export class Remote extends EventTarget {
    * @param {() => object|null} o.getScreen { screenId, loungeToken, name, expiration } or null
    * @param {(screen: object) => void} o.setScreen persist a refreshed token
    */
-  constructor({ deviceId, getDeviceName, getScreen, setScreen }) {
+  constructor({ deviceId, getDeviceName, getScreen, setScreen, getAds }) {
     super();
+    this.getAds = getAds;
     this.deviceId = deviceId;
     this.getDeviceName = getDeviceName;
     this.getScreen = getScreen;
@@ -126,30 +129,28 @@ export class Remote extends EventTarget {
     this._abortStream();
     this._setStatus('connecting');
     try {
-      await this._bind(gen, /* allowRefresh */ true);
+      await this._bind(gen);
     } catch (e) {
       if (gen === this._generation) this._setStatus('disconnected', e.message);
       throw e;
     }
   }
 
-  async _bind(gen, allowRefresh) {
+  /**
+   * Attaches to the server-side TV session (creating it if needed). The
+   * server holds the actual connection to the TV and runs the ad engine, so it
+   * keeps working while this phone is asleep or in another app.
+   */
+  async _bind(gen) {
     const screen = this.getScreen();
-    const session = { loungeToken: screen.loungeToken, deviceId: this.deviceId, name: this.getDeviceName(), rid: 1, ofs: 0 };
-    let result;
-    try {
-      result = await api('/api/lounge/connect', { method: 'POST', body: session });
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'TOKEN_EXPIRED' && allowRefresh) {
-        log('app', 'lounge token expired during bind; refreshing and retrying');
-        await this._refreshToken();
-        return this._bind(gen, false);
-      }
-      throw e;
-    }
+    const result = await api('/api/remote/attach', {
+      method: 'POST',
+      body: { screen: { screenId: screen.screenId, loungeToken: screen.loungeToken, name: screen.name }, deviceId: this.deviceId, name: this.getDeviceName(), ads: this.getAds() },
+    });
     if (gen !== this._generation) return; // superseded by a newer connect/disconnect
-    log('app', `bound to TV (aid ${result.aid}, ${result.events.length} initial events)`);
-    this.session = { ...session, sid: result.sid, gsessionid: result.gsessionid, aid: result.aid, rid: 2, ofs: 0 };
+    if (result.screen && result.screen.loungeToken !== screen.loungeToken) this.setScreen({ ...screen, ...result.screen });
+    log('app', `attached to the server's TV session (status ${result.status}, ${result.events.length} state events)`);
+    this.session = { screenId: screen.screenId, cursor: result.cursor };
     this.player = this._emptyPlayer();
     this.ad = this._emptyAd();
     this.tvQueue = { listId: null, videoIds: [], currentIndex: -1 };
@@ -160,12 +161,11 @@ export class Remote extends EventTarget {
     this._streamLoop(gen, this._loopId);
   }
 
-  /** Re-opens the channel after SESSION_LOST without touching the UI status. */
   async _rebind() {
-    const gen = this._generation;
-    await this._bind(gen, true);
+    await this._bind(this._generation);
   }
 
+  /** Disconnect closes the server session too (the TV stops listing this remote). */
   async disconnect() {
     this._generation += 1;
     this._abortStream();
@@ -174,9 +174,9 @@ export class Remote extends EventTarget {
     this._setStatus('disconnected');
     if (session) {
       try {
-        await api('/api/lounge/disconnect', { method: 'POST', body: session });
+        await api('/api/remote/close', { method: 'POST', body: { screenId: session.screenId } });
       } catch (e) {
-        this._emit('error', { error: e });
+        if (!(e instanceof ApiError && e.code === 'SESSION_GONE')) this._emit('error', { error: e });
       }
     }
   }
@@ -188,15 +188,26 @@ export class Remote extends EventTarget {
     }
   }
 
-  /** Call when the app returns to the foreground: restart the stream and ask for fresh state. */
+  /** Call when the app returns to the foreground: reopen the stream right away. */
   async resume() {
     if (!this.connected) return;
     this._abortStream();
-    await this.getNowPlaying();
+  }
+
+  /** Pushes changed ad settings to the server session. */
+  async updateSettings(ads) {
+    if (!this.session) return;
+    await api('/api/remote/settings', { method: 'POST', body: { screenId: this.session.screenId, ads } });
+  }
+
+  /** Manual dodge (the overlay button). The server does the actual reload. */
+  async dodge() {
+    if (!this.session) throw new Error('Not connected to the TV');
+    return api('/api/remote/dodge', { method: 'POST', body: { screenId: this.session.screenId } });
   }
 
   // ---------------------------------------------------------------------------
-  // Event stream
+  // Event stream (from the server session)
   // ---------------------------------------------------------------------------
 
   async _streamLoop(gen, loopId) {
@@ -208,35 +219,22 @@ export class Remote extends EventTarget {
       try {
         await this._streamOnce(abort.signal);
         backoff = 1000;
-        await new Promise((r) => setTimeout(r, 300)); // YouTube closes each long-poll; never spin
       } catch (e) {
         if (abort.signal.aborted) {
-          // Aborted on purpose (resume / disconnect). Loop condition decides what happens next.
-          await new Promise((r) => setTimeout(r, 200));
+          await new Promise((r) => setTimeout(r, 100));
           continue;
         }
         if (!alive()) return;
         const code = e instanceof ApiError ? e.code : null;
         log('error', `event stream failed: ${e.message}`, { code });
-        try {
-          if (code === 'SESSION_LOST') {
+        if (code === 'SESSION_GONE') {
+          try {
             await this._rebind();
-            return; // _bind started a new loop
+          } catch (inner) {
+            this._emit('error', { error: inner });
+            this._setStatus('disconnected', inner.message);
           }
-          if (code === 'TOKEN_EXPIRED') {
-            await this._refreshToken();
-            await this._rebind();
-            return;
-          }
-          if (code === 'SCREEN_GONE') {
-            this._setStatus('disconnected', e.message);
-            this._emit('error', { error: e });
-            return;
-          }
-        } catch (inner) {
-          this._emit('error', { error: inner });
-          this._setStatus('disconnected', inner.message);
-          return;
+          return; // _bind started a new loop
         }
         this._emit('error', { error: e });
         await new Promise((r) => setTimeout(r, backoff));
@@ -249,17 +247,8 @@ export class Remote extends EventTarget {
 
   async _streamOnce(signal) {
     const s = this.session;
-    const q = new URLSearchParams({
-      loungeToken: s.loungeToken,
-      deviceId: s.deviceId,
-      name: s.name,
-      sid: s.sid,
-      gsessionid: s.gsessionid,
-      aid: String(s.aid),
-      rid: String(s.rid),
-      ofs: String(s.ofs),
-    });
-    const res = await fetch(`/api/lounge/events?${q}`, { signal });
+    const q = new URLSearchParams({ screenId: s.screenId, cursor: String(s.cursor) });
+    const res = await fetch(`/api/remote/events?${q}`, { signal });
     if (!res.ok) {
       const text = await res.text();
       let json;
@@ -284,29 +273,34 @@ export class Remote extends EventTarget {
         if (!line) continue;
         const msg = JSON.parse(line);
         if (msg.error) throw new ApiError(502, msg.error.code, msg.error.message, msg.error.detail);
-        this._handleEvent(msg);
+        if (msg.closed) throw new ApiError(404, 'SESSION_GONE', 'The server closed the TV session');
+        if (typeof msg.seq === 'number') s.cursor = msg.seq;
+        if (msg.ev) this._handleEvent(msg.ev);
+        else if (msg.log) log('server', msg.log, msg.data);
+        else if (msg.cmd) log('cmd', `${msg.cmd} ok on server (${msg.ms} ms to YouTube)`, msg.params);
+        else if (msg.status) {
+          if (msg.status !== 'connected') log('status', `server: ${msg.status} ${msg.detail || ''}`);
+        } else if (msg.screen) this.setScreen({ ...this.getScreen(), ...msg.screen });
+        else if (msg.toast) this._emit('notice', { message: msg.toast });
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Commands
+  // Commands (relayed through the server session)
   // ---------------------------------------------------------------------------
 
-  /** Sends one command; commands are serialised so the TV sees them in order. */
+  /**
+   * Playback controls go out at once; queue commands are chained so they reach
+   * the server in order (the server spaces them for the Xbox).
+   */
   send(name, params = {}) {
-    if (name === 'play' || name === 'pause' || name === 'skipAd' || name === 'next' || name === 'previous') return this._sendNow(name, params);
+    if (!QUEUE_COMMANDS.has(name)) return this._send(name, params, true);
     const run = () => this._send(name, params, true);
     const p = this._chain.then(run, run);
-    const spacing = name === 'addVideo' || name === 'insertVideo' || name === 'removeVideo' || name === 'setPlaylist' ? 1200 : 0;
-    this._chain = p.then(() => new Promise((r) => setTimeout(r, spacing)), () => {});
+    this._chain = p.catch(() => {});
     return p;
   }
-
-  /**
-   * Playback controls do not wait behind queue spacing. They still get their
-   * RID/ofs synchronously at call time, so ordering on the wire stays correct.
-   */
   _sendNow(name, params = {}) {
     return this._send(name, params, true);
   }
@@ -316,21 +310,14 @@ export class Remote extends EventTarget {
       log('error', `command ${name} while not connected`, params);
       throw new Error(`Not connected to the TV (tried to send ${name})`);
     }
-    const s = this.session;
-    const payload = { session: { ...s }, commands: [{ name, params }] };
-    s.rid += 1;
-    s.ofs += 1;
     const started = Date.now();
     try {
-      const result = await api('/api/lounge/command', { method: 'POST', body: payload });
-      log('cmd', `${name} ok (${Date.now() - started} ms, rid ${s.rid}, ofs ${s.ofs})`, params);
-      for (const ev of result.events) this._handleEvent(ev);
+      const result = await api('/api/remote/command', { method: 'POST', body: { screenId: this.session.screenId, name, params } });
+      log('cmd', `${name} sent (${Date.now() - started} ms round trip)`, params);
       return result;
     } catch (e) {
       log('error', `${name} failed: ${e.message}`, { params, code: e.code });
-      if (e instanceof ApiError && allowRecover && (e.code === 'SESSION_LOST' || e.code === 'TOKEN_EXPIRED')) {
-        log('app', `recovering from ${e.code}: rebinding and retrying ${name}`);
-        if (e.code === 'TOKEN_EXPIRED') await this._refreshToken();
+      if (e instanceof ApiError && allowRecover && e.code === 'SESSION_GONE') {
         this._abortStream();
         await this._rebind();
         return this._send(name, params, false);

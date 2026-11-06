@@ -34,6 +34,7 @@ const fs = require('fs');
 const path = require('path');
 const innertube = require('./lib/innertube');
 const sponsorblock = require('./lib/sponsorblock');
+const tv = require('./lib/session');
 const lounge = require('./lib/lounge');
 const { HttpError, jsonBody, requireString, sendJson, sendError } = require('./lib/util');
 
@@ -165,11 +166,86 @@ async function api(req, res) {
     case 'GET /api/cookies/status': {
       return sendJson(res, 200, { source: req.get('X-YT-Cookies') ? 'phone' : process.env.YT_COOKIES ? 'server' : 'none', jar: innertube.jarStatus(cookiesFor(req)) });
     }
+    case 'GET /api/subscriptions': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      return sendJson(res, 200, await innertube.subscriptions(cookiesFor(req), cont));
+    }
+    case 'GET /api/channel': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      const id = cont ? '' : requireString(req.query, 'id', 'query');
+      return sendJson(res, 200, await innertube.channelVideos(cookiesFor(req), id, cont));
+    }
+    case 'POST /api/feedback': {
+      return sendJson(res, 200, await innertube.feedback(cookiesFor(req), requireString(jsonBody(req), 'token', 'body')));
+    }
     case 'GET /api/sponsorblock': {
       return sendJson(res, 200, await sponsorblock.segments(requireString(req.query, 'id', 'query')));
     }
     case 'GET /api/comments': {
       return sendJson(res, 200, await innertube.comments(cookiesFor(req), requireString(req.query, 'continuation', 'query')));
+    }
+    // --- Server-side TV session (the phone attaches to it) ---
+    case 'POST /api/remote/attach': {
+      const body = jsonBody(req);
+      if (!body.screen || typeof body.screen !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.screen is required');
+      requireString(body.screen, 'screenId', 'screen');
+      requireString(body.screen, 'loungeToken', 'screen');
+      if (!body.ads || typeof body.ads !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.ads is required');
+      const selfUrl = `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
+      return sendJson(res, 200, await tv.attach({ screen: body.screen, deviceId: requireString(body, 'deviceId', 'body'), name: requireString(body, 'name', 'body'), ads: body.ads, selfUrl }));
+    }
+    case 'GET /api/remote/events': {
+      const s = tv.get(requireString(req.query, 'screenId', 'query'));
+      let cursor = Number(req.query.cursor);
+      if (!Number.isInteger(cursor)) throw new HttpError(400, 'BAD_REQUEST', 'cursor must be an integer');
+      res.status(200);
+      res.set('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.set('Cache-Control', 'no-store');
+      res.set('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+      let gone = false;
+      req.on('close', () => (gone = true));
+      const until = Date.now() + 25000;
+      while (!gone && !s.closed && Date.now() < until) {
+        const items = await s.since(cursor, until - Date.now());
+        for (const it of items) {
+          res.write(JSON.stringify(it) + '\n');
+          cursor = it.seq;
+        }
+        s.lastPhoneAt = Date.now();
+      }
+      if (s.closed) res.write(JSON.stringify({ closed: true }) + '\n');
+      return res.end();
+    }
+    case 'POST /api/remote/command': {
+      const body = jsonBody(req);
+      const s = tv.get(requireString(body, 'screenId', 'body'));
+      const params = body.params === undefined ? {} : body.params;
+      return sendJson(res, 200, await s.send(requireString(body, 'name', 'body'), params));
+    }
+    case 'POST /api/remote/settings': {
+      const body = jsonBody(req);
+      const s = tv.get(requireString(body, 'screenId', 'body'));
+      if (!body.ads || typeof body.ads !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.ads is required');
+      s.ads = { ...body.ads };
+      s.log('ad settings updated', s.ads);
+      return sendJson(res, 200, { ok: true });
+    }
+    case 'POST /api/remote/dodge': {
+      const s = tv.get(requireString(jsonBody(req), 'screenId', 'body'));
+      return sendJson(res, 200, await s.dodge('button'));
+    }
+    case 'POST /api/remote/close': {
+      const s = tv.get(requireString(jsonBody(req), 'screenId', 'body'));
+      s.close('closed from the phone');
+      return sendJson(res, 200, { ok: true });
+    }
+    case 'GET /api/remote/hold': {
+      // Not via tv.get(): the hold request must not count as phone activity, or the session would never idle out.
+      const s = tv.sessions.get(requireString(req.query, 'screenId', 'query'));
+      if (!s) throw new HttpError(404, 'SESSION_GONE', 'No session to hold');
+      await s.holdOpen();
+      return sendJson(res, 200, { ok: true, closed: s.closed });
     }
     case 'POST /api/lounge/pair': {
       const body = jsonBody(req);

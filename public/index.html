@@ -56,6 +56,18 @@
       <p class="empty" id="queue-empty">Your queue is empty. Tap any video and choose <b>Add to queue</b>.</p>
     </section>
 
+    <section class="view" id="view-subs" hidden>
+      <div class="substrip" id="subs-strip"></div>
+      <div class="notice" id="subs-notice" hidden></div>
+      <div class="plhead" id="subs-head" hidden>
+        <img class="subs-head-avatar" id="subs-head-avatar" alt="">
+        <div class="plhead-text"><div class="plhead-title" id="subs-head-title"></div><div class="plhead-sub">Latest videos</div></div>
+      </div>
+      <div class="list" id="subs-list"></div>
+      <div class="sentinel" id="subs-sentinel"></div>
+      <div class="loading" id="subs-loading" hidden><span class="spinner"></span></div>
+    </section>
+
     <section class="view" id="view-library" hidden>
       <div class="chips" id="library-chips">
         <button class="chip active" data-lib="WL">Watch later</button>
@@ -90,6 +102,7 @@
 
   <nav class="bottomnav">
     <button class="navbtn active" data-view="home"><span class="ico" data-icon="home"></span><span>Home</span></button>
+    <button class="navbtn" data-view="subs"><span class="ico" data-icon="subs"></span><span>Subs</span></button>
     <button class="navbtn" data-view="search"><span class="ico" data-icon="search"></span><span>Search</span></button>
     <button class="navbtn" data-view="queue"><span class="ico" data-icon="queue"></span><span>Queue</span><span class="badge" id="queue-badge" hidden></span></button>
     <button class="navbtn" data-view="library"><span class="ico" data-icon="library"></span><span>Library</span></button>
@@ -143,6 +156,7 @@
     <div class="np-row">
       <label class="toggle"><input type="checkbox" id="np-autoplay"><span></span>Autoplay</label>
       <button class="btn ghost small" id="np-start" hidden>Start queue on TV</button>
+      <button class="btn ghost small danger" id="np-done">Done — shut down</button>
     </div>
     <div class="tabs" id="np-tabs">
       <button class="tab active" data-tab="queue">Up next</button>
@@ -172,6 +186,7 @@
     <button class="btn action" id="sheet-playnow"><span class="ico" data-icon="play"></span>Play now</button>
     <button class="btn action" id="sheet-playnext"><span class="ico" data-icon="playnext"></span>Play next</button>
     <button class="btn action" id="sheet-addqueue"><span class="ico" data-icon="addqueue"></span>Add to queue</button>
+    <div id="sheet-feedback"></div>
     <button class="btn action small-action" id="sheet-save"><span class="ico" data-icon="bookmark"></span>Save to Watch later / playlist</button>
     <button class="btn ghost" id="sheet-cancel">Cancel</button>
   </section>

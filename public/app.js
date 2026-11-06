@@ -6,11 +6,13 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
+import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, sendFeedback as apiSendFeedback } from './api.js';
 import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist, sponsorSegments as apiSponsorSegments } from './api.js';
 import { store, AD_DEFAULTS } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
 import { icon } from './icons.js';
 import * as debug from './debug.js';
+import { media } from './media.js';
 
 // ---------------------------------------------------------------------------
 // Tiny DOM helpers
@@ -88,6 +90,7 @@ const remote = new Remote({
   deviceId: store.deviceId,
   getDeviceName: () => store.settings.deviceName,
   getScreen: () => store.settings.screen,
+  getAds: () => store.settings.ads,
   setScreen: (screen) => {
     store.settings.screen = screen;
     store.saveSettings();
@@ -124,6 +127,7 @@ function showView(name) {
   if (name === 'queue') renderQueue();
   if (name === 'tv') renderTvView();
   if (name === 'library' && !ui.library.loaded) loadLibrary(true).catch(showError);
+  if (name === 'subs' && !SUBS.loaded) loadSubs(true).catch(showError);
   window.scrollTo(0, 0);
 }
 for (const b of document.querySelectorAll('.navbtn')) b.addEventListener('click', () => showView(b.dataset.view));
@@ -136,13 +140,16 @@ $('#btn-refresh').addEventListener('click', guard(() => loadFeed(true)));
 // ---------------------------------------------------------------------------
 function card(v, { compact = false } = {}) {
   const sub = joinMeta(v.channel, v.views, v.published);
-  return el(
+  const node = el(
     'button',
-    { class: 'card', type: 'button', onclick: () => openSheet(v) },
+    { class: 'card', type: 'button', onclick: () => { if (!swipe.justSwiped) openSheet(v); } },
     el('div', { class: 'thumb' }, el('img', { src: v.thumbnail, alt: '', loading: 'lazy' }), v.duration ? el('span', { class: `dur${v.isLive ? ' live' : ''}` }, v.duration) : null),
     el('div', { class: 'card-text' }, el('div', {}, el('div', { class: 'card-title' }, v.title), el('div', { class: 'card-sub' }, sub)))
   );
+  cardVideo.set(node, v);
+  return node;
 }
+const cardVideo = new WeakMap();
 
 /**
  * After a page loads, keep loading while the end-of-list marker is still on
@@ -180,7 +187,7 @@ async function loadFeed(reset) {
     f.signedIn = res.signedIn;
     f.loaded = true;
     debug.log('app', `home feed page: +${res.items.length} videos (total ${f.items.length}), more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
-    renderList($('#feed-list'), f.items);
+    renderList($('#feed-list'), visibleFeed());
     const notice = $('#feed-notice');
     if (!res.signedIn) {
       notice.hidden = false;
@@ -255,8 +262,32 @@ function openSheet(v) {
   $('#sheet-thumb').src = v.thumbnail;
   $('#sheet-title').textContent = v.title;
   $('#sheet-sub').textContent = joinMeta(v.channel, v.duration);
+  // Remove-from-recommendations options: YouTube's own ("Not interested", "Don't recommend channel")
+  // when the item came with them, plus a local hide that always works.
+  const fromHome = ui.view === 'home';
+  const opts = (v.feedback || []).map((f) => el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, f)) }, el('span', { class: 'ico', html: icon('hide') }), f.label));
+  if (fromHome) opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, null)) }, el('span', { class: 'ico', html: icon('hide') }), 'Hide from my feed'));
+  $('#sheet-feedback').replaceChildren(...opts);
   $('#sheet').hidden = false;
   $('#sheet-backdrop').hidden = false;
+}
+
+/** Hides the video locally at once (persisted), then tells YouTube when a token is available. */
+async function removeRecommendation(v, option) {
+  closeSheet();
+  store.hide(v.videoId);
+  renderList($('#feed-list'), visibleFeed());
+  debug.log('app', `removed recommendation ${v.videoId}${option ? ` via "${option.label}"` : ' (local hide)'}`);
+  if (!option) {
+    toast('Hidden from your feed');
+    return;
+  }
+  await apiSendFeedback(option.token);
+  toast(`${option.label}: YouTube will show fewer like this`);
+}
+function visibleFeed() {
+  const hidden = new Set(store.hidden);
+  return ui.feed.items.filter((v) => !hidden.has(v.videoId));
 }
 function closeSheet() {
   $('#sheet').hidden = true;
@@ -426,6 +457,7 @@ async function playNow(v) {
   const at = insertAfterCurrent(queueItem(v));
   Q.currentIndex = at;
   saveQueue();
+  if (!remote.connected && store.settings.screen) await remote.connect(); // e.g. after "Done — shut down"
   if (!remote.connected) {
     toast('Queued. Connect to the TV to play it.');
     return;
@@ -814,7 +846,22 @@ $('#np-next').addEventListener('click', guard(() => remote.next()));
 $('#np-back').addEventListener('click', guard(() => remote.seekBy(-10)));
 $('#np-fwd').addEventListener('click', guard(() => remote.seekBy(10)));
 $('#np-skip').addEventListener('click', guard(() => remote.skipAd()));
-$('#np-dodge').addEventListener('click', guard(() => dodgeAd('button')));
+$('#np-dodge').addEventListener('click', guard(() => dodgeAd()));
+
+/**
+ * "Done": closes the server's TV session right away (its keep-alive stops, so
+ * Cloud Run can scale to zero) and stops the phone notification. The app does
+ * not auto-reconnect until you connect again or press Play now.
+ */
+async function shutDown() {
+  ui.shutDown = true;
+  debug.log('app', 'shut down pressed');
+  closeNowPlaying();
+  media.stop();
+  await remote.disconnect();
+  toast('Shut down. The server will sleep now.');
+}
+$('#np-done').addEventListener('click', guard(shutDown));
 
 // ---------------------------------------------------------------------------
 // Ad strategies: auto-skip, dodge (exit + reload), mute, SponsorBlock
@@ -825,10 +872,12 @@ const DODGE_MIN_AD_SECONDS = 5; // reloads sent earlier than this do not take (i
 
 function adStatusText() {
   const s = ADS();
-  const parts = [];
-  parts.push(s.autoSkip ? 'auto-skip on' : 'auto-skip off');
-  if (s.dodge) parts.push(adRun.waitTimer ? 'dodge: waiting for 5 s of ad' : adRun.busy ? 'dodge: reloading' : `dodge ${adRun.dodges}/${s.dodgeMax}`);
-  if (adRun.muted) parts.push('muted');
+  const parts = [s.autoSkip ? 'auto-skip on' : 'auto-skip off'];
+  if (s.dodge && !remote.ad.skipEnabled) {
+    const left = Math.max(0, DODGE_MIN_AD_SECONDS - remote.adElapsed());
+    parts.push(left > 0 ? `server dodges in ${Math.ceil(left)} s` : 'server dodging');
+  }
+  if (s.muteAds) parts.push('muted by server');
   return parts.join(' · ');
 }
 
@@ -838,80 +887,31 @@ function resetAdRun(videoId) {
   adRun.dodges = 0;
   adRun.autoSkipped = 0;
 }
-function cancelDodgeWait() {
-  if (adRun.waitTimer) {
-    clearTimeout(adRun.waitTimer);
-    adRun.waitTimer = null;
-  }
-}
 
+// The ad engine itself runs on the server (lib/session.js), so it keeps
+// working while this phone is asleep. The phone only shows what happens.
 remote.addEventListener('ad', (e) => {
-  const phase = e.detail.phase;
-  const s = ADS();
   resetAdRun(remote.player.videoId);
-  debug.log('app', `ad ${phase}`, { ad: remote.ad, dodges: adRun.dodges, settings: s });
-  if (phase === 'start') {
-    if (s.muteAds && !adRun.muted) {
-      remote.setMuted(true).then(() => { adRun.muted = true; }).catch(showError);
-    }
-    if (s.dodge && !remote.ad.skipEnabled && adRun.dodges < s.dodgeMax && !adRun.busy) scheduleDodge();
-  } else if (phase === 'skippable') {
-    cancelDodgeWait(); // a skip is cheaper than a reload
-    if (s.autoSkip) {
-      adRun.autoSkipped += 1;
-      remote.skipAd().then(() => toast('Ad skipped automatically')).catch(showError);
-    }
-  } else if (phase === 'end') {
-    cancelDodgeWait();
-    if (adRun.muted) {
-      remote.setMuted(false).then(() => { adRun.muted = false; }).catch(showError);
-    }
-  }
+  if (e.detail.phase === 'start') adRun.startedAt = Date.now();
   if (ui.npOpen) renderNowPlaying();
 });
+remote.addEventListener('notice', (e) => toast(e.detail.message));
 
-/** Waits until the ad has played DODGE_MIN_AD_SECONDS, then reloads. Cancelled if the ad ends or becomes skippable first. */
-function scheduleDodge() {
-  cancelDodgeWait();
-  const wait = Math.max(0, DODGE_MIN_AD_SECONDS - remote.adElapsed()) * 1000;
-  debug.log('app', `ad dodge armed: reload in ${Math.round(wait / 1000)}s`);
-  adRun.waitTimer = setTimeout(() => {
-    adRun.waitTimer = null;
-    if (!remote.ad.active) return;
-    dodgeAd('auto').catch(showError);
-  }, wait);
-  if (ui.npOpen) renderNowPlaying();
-}
-
-/**
- * Your manual trick, automated: optionally leave the player (stopVideo, like
- * pressing B), load the same video again at the position it was at, then force
- * a seek to that position once the TV reports it playing. The reload makes
- * YouTube treat it as a fresh load whose ad decision has already been spent.
- */
-async function dodgeAd(trigger) {
+/** Manual dodge (overlay button): the server does the reload. */
+async function dodgeAd() {
   if (!remote.connected) throw new Error('Not connected to the TV');
-  if (Q.currentIndex < 0 || !Q.items[Q.currentIndex]) throw new Error('Dodge needs the queue to be playing from this phone (use Play now first)');
-  if (adRun.busy) return;
-  cancelDodgeWait();
-  const s = ADS();
   adRun.busy = true;
-  adRun.dodges += 1;
-  const index = Q.currentIndex;
-  const base = resumeTimeFor(index);
-  const position = base > 0 ? base + s.dodgeOffset : 0;
-  debug.log('app', `ad dodge #${adRun.dodges} (${trigger}, ad at ${Math.floor(remote.adElapsed())}s): ${s.dodgeExit ? 'stopVideo, ' : ''}reload #${index + 1} at ${Math.floor(position)}s`, { lastKnown: store.lastKnown });
+  if (ui.npOpen) renderNowPlaying();
   try {
-    if (s.dodgeExit) {
-      await remote.stopVideo();
-      await new Promise((r) => setTimeout(r, 1500));
-    }
-    await pushQueue(index, position);
-    toast(`Reloaded to dodge the ad (${adRun.dodges}/${s.dodgeMax})`);
+    await remote.dodge();
+    toast('Reloading to dodge the ad');
   } finally {
     adRun.busy = false;
     if (ui.npOpen) renderNowPlaying();
   }
+}
+function pushAdSettings() {
+  remote.updateSettings(store.settings.ads).catch(showError);
 }
 
 // --- SponsorBlock ---------------------------------------------------------
@@ -929,17 +929,6 @@ async function loadSponsorSegments(videoId) {
 function activeSponsorSegments() {
   const cats = ADS().sponsorCategories;
   return sb.segments.filter((x) => cats.includes(x.category));
-}
-function sponsorTick() {
-  if (!ADS().sponsorBlock || !remote.connected || remote.ad.active) return;
-  const pl = remote.player;
-  if (!pl.videoId || pl.videoId !== sb.videoId || pl.state !== PLAYER_STATE.PLAYING) return;
-  const t = remote.estimatedTime();
-  const seg = activeSponsorSegments().find((x) => t >= x.start && t < x.end - 1 && !sb.skipped.has(x.uuid));
-  if (!seg) return;
-  sb.skipped.add(seg.uuid);
-  debug.log('app', `SponsorBlock: skipping ${seg.category} ${Math.floor(seg.start)}→${Math.floor(seg.end)} (at ${Math.floor(t)}s)`);
-  remote.seekTo(seg.end).then(() => toast(`Skipped ${seg.category} (${Math.round(seg.end - seg.start)}s)`)).catch(showError);
 }
 $('#np-autoplay').addEventListener('change', guard((e) => remote.setAutoplay(e.target.checked)));
 $('#np-start').addEventListener('click', guard(() => { const s = Math.max(0, Math.min(Q.currentIndex, Q.items.length - 1)); return pushQueue(s, resumeTimeFor(s)); }));
@@ -1380,6 +1369,217 @@ $('#library-playall').addEventListener('click', guard(async () => queueMany(awai
 $('#library-queueall').addEventListener('click', guard(async () => queueMany(await allPlaylistItems(), false)));
 
 // ---------------------------------------------------------------------------
+// Phone notification controls
+// ---------------------------------------------------------------------------
+media.setHandlers({
+  play: () => remote.play().catch(showError),
+  pause: () => remote.pause().catch(showError),
+  next: () => remote.next().catch(showError),
+  previous: () => remote.previous().catch(showError),
+  seekBy: (d) => remote.seekBy(d).catch(showError),
+  seekTo: (t) => remote.seekTo(t).catch(showError),
+});
+function syncMedia() {
+  const pl = remote.player;
+  if (!remote.connected || !pl.videoId) {
+    if (media.active) media.stop();
+    return;
+  }
+  const data = ui.watch.videoId === pl.videoId ? ui.watch.data : null;
+  const item = Q.items.find((it) => it.videoId === pl.videoId) || store.video(pl.videoId);
+  media.update({
+    title: remote.ad.active ? 'Ad playing on TV' : data ? data.video.title : item ? item.title : 'Playing on TV',
+    artist: data ? data.video.channel : item ? item.channel : '',
+    artwork: `https://i.ytimg.com/vi/${pl.videoId}/hqdefault.jpg`,
+    playing: pl.state === PLAYER_STATE.PLAYING || pl.state === PLAYER_STATE.AD || pl.state === PLAYER_STATE.BUFFERING,
+    position: remote.estimatedTime(),
+    duration: pl.duration,
+  });
+}
+/** Audio may only start from a tap: try on every tap while the TV plays and the notification is not up yet. */
+document.addEventListener('pointerdown', () => {
+  if (media.active || !media.supported || !remote.connected || !remote.player.videoId) return;
+  media.start().then((ok) => { if (ok) { debug.log('app', 'phone notification controls started'); syncMedia(); } }).catch((e) => debug.log('error', `notification controls could not start: ${e.message}`));
+}, true);
+
+// ---------------------------------------------------------------------------
+// Swipe on video cards: right = add to queue, left = get rid of it
+// ---------------------------------------------------------------------------
+const swipe = { justSwiped: false };
+
+/** What a left swipe means in each list; null = no left action there. */
+function leftAction(listId) {
+  if (listId === 'feed-list' || listId === 'subs-list' || listId === 'search-list' || listId === 'np-related') return { label: 'Remove', run: dismissVideo };
+  if (listId === 'library-list' && !L.playlist && L.tab === 'WL') return { label: 'Remove from Watch later', run: removeFromWatchLater };
+  return null;
+}
+
+/** Left swipe on a recommendation: hide it for good, and tell YouTube "Not interested" when it offered that. */
+async function dismissVideo(v) {
+  store.hide(v.videoId);
+  const notInterested = (v.feedback || []).find((f) => /not interested/i.test(f.label));
+  debug.log('app', `swiped away ${v.videoId}${notInterested ? ' (+ Not interested)' : ''}`);
+  if (notInterested) await apiSendFeedback(notInterested.token);
+}
+async function removeFromWatchLater(v) {
+  L.items = L.items.filter((x) => x.videoId !== v.videoId);
+  await apiEditPlaylist('WL', v.videoId, 'remove');
+  debug.log('app', `swiped ${v.videoId} out of Watch later`);
+}
+
+function attachSwipe(container) {
+  let card = null, bg = null, startX = 0, startY = 0, dx = 0, horizontal = null;
+  const reset = () => {
+    if (bg) bg.remove();
+    card = bg = null;
+    horizontal = null;
+    dx = 0;
+  };
+  container.addEventListener('touchstart', (e) => {
+    const c = e.target.closest('.card');
+    if (!c || e.touches.length !== 1 || !cardVideo.has(c)) return;
+    card = c;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    horizontal = null;
+    dx = 0;
+  }, { passive: true });
+  container.addEventListener('touchmove', (e) => {
+    if (!card) return;
+    const x = e.touches[0].clientX - startX;
+    const y = e.touches[0].clientY - startY;
+    if (horizontal === null) {
+      if (Math.abs(x) < 12 && Math.abs(y) < 12) return;
+      horizontal = Math.abs(x) > Math.abs(y) * 1.4;
+      if (!horizontal) {
+        card = null; // vertical scroll: leave it alone
+        return;
+      }
+      bg = el('div', { class: 'swipe-bg' }, el('span', { class: 'swipe-right' }, '+ Queue'), el('span', { class: 'swipe-left' }, (leftAction(container.id) || { label: '' }).label));
+      bg.style.top = `${card.offsetTop}px`;
+      bg.style.height = `${card.offsetHeight}px`;
+      container.insertBefore(bg, card);
+      card.style.transition = 'none';
+    }
+    e.preventDefault();
+    dx = x;
+    if (dx < 0 && !leftAction(container.id)) dx = Math.max(dx, -40); // no left action here: just a nudge
+    card.style.transform = `translateX(${dx}px)`;
+    bg.classList.toggle('go-right', dx > 0);
+    bg.classList.toggle('go-left', dx < 0);
+    bg.classList.toggle('armed', Math.abs(dx) > card.offsetWidth * 0.3);
+  }, { passive: false });
+  const end = () => {
+    if (!card || !horizontal) return reset();
+    const c = card;
+    const v = cardVideo.get(c);
+    const w = c.offsetWidth;
+    const left = leftAction(container.id);
+    const commit = dx > w * 0.3 ? 'right' : dx < -w * 0.3 && left ? 'left' : null;
+    swipe.justSwiped = true;
+    setTimeout(() => (swipe.justSwiped = false), 350);
+    c.style.transition = 'transform .18s ease-out, opacity .18s';
+    const bgEl = bg;
+    card = bg = null;
+    if (!commit) {
+      c.style.transform = '';
+      setTimeout(() => bgEl.remove(), 180);
+      return;
+    }
+    if (commit === 'right') {
+      c.style.transform = '';
+      setTimeout(() => bgEl.remove(), 180);
+      addToQueue(v).catch(showError);
+      return;
+    }
+    // left: slide out, collapse, then do it
+    c.style.transform = `translateX(${-w}px)`;
+    c.style.opacity = '0';
+    setTimeout(() => {
+      bgEl.remove();
+      c.style.transition = 'height .2s, padding .2s';
+      c.style.height = `${c.offsetHeight}px`;
+      requestAnimationFrame(() => { c.style.height = '0px'; c.style.paddingBottom = '0px'; c.style.overflow = 'hidden'; });
+      setTimeout(() => c.remove(), 220);
+    }, 180);
+    left.run(v).then(() => toast(`${left.label}: ${v.title}`)).catch(showError);
+  };
+  container.addEventListener('touchend', end);
+  container.addEventListener('touchcancel', () => {
+    if (card) card.style.transform = '';
+    reset();
+  });
+}
+for (const id of ['feed-list', 'subs-list', 'search-list', 'library-list', 'np-related']) attachSwipe(document.getElementById(id));
+
+// ---------------------------------------------------------------------------
+// Subscriptions: feed + channel strip
+// ---------------------------------------------------------------------------
+const SUBS = { loaded: false, loading: false, items: [], continuation: null, channels: [], channel: null };
+
+function renderSubs() {
+  const strip = $('#subs-strip');
+  const chip = (active, img, label, onclick) => el('button', { class: `subchip${active ? ' active' : ''}`, type: 'button', onclick }, img, el('span', {}, label));
+  strip.replaceChildren(
+    chip(!SUBS.channel, el('div', { class: 'all' }, 'All'), 'All', () => { SUBS.channel = null; loadSubs(true).catch(showError); }),
+    ...SUBS.channels.map((c) => chip(SUBS.channel && SUBS.channel.channelId === c.channelId, c.avatar ? el('img', { src: c.avatar, alt: '', loading: 'lazy' }) : el('div', { class: 'all' }, (c.title || '?').slice(0, 1).toUpperCase()), c.title, () => {
+      SUBS.channel = SUBS.channel && SUBS.channel.channelId === c.channelId ? null : c;
+      loadSubs(true).catch(showError);
+    }))
+  );
+  $('#subs-head').hidden = !SUBS.channel;
+  if (SUBS.channel) {
+    $('#subs-head-avatar').hidden = !SUBS.channel.avatar;
+    if (SUBS.channel.avatar) $('#subs-head-avatar').src = SUBS.channel.avatar;
+    $('#subs-head-title').textContent = SUBS.channel.title;
+  }
+  const hiddenSubs = new Set(store.hidden);
+  renderList($('#subs-list'), SUBS.items.filter((v) => !hiddenSubs.has(v.videoId)));
+  if (SUBS.loaded && SUBS.items.length === 0) $('#subs-list').replaceChildren(el('p', { class: 'empty' }, 'No videos.'));
+}
+
+async function loadSubs(reset) {
+  if (SUBS.loading) return;
+  if (reset) {
+    SUBS.items = [];
+    SUBS.continuation = null;
+    SUBS.loaded = false;
+    renderSubs();
+    window.scrollTo(0, 0);
+  } else if (!SUBS.continuation) return;
+  SUBS.loading = true;
+  $('#subs-loading').hidden = false;
+  $('#subs-notice').hidden = true;
+  try {
+    let res;
+    if (SUBS.channel) res = await apiChannelVideos(SUBS.channel.channelId, reset ? null : SUBS.continuation);
+    else {
+      res = await apiSubscriptions(reset ? null : SUBS.continuation);
+      if (reset) SUBS.channels = res.channels;
+    }
+    SUBS.items = SUBS.items.concat(res.items);
+    SUBS.continuation = res.continuation;
+    SUBS.loaded = true;
+    renderSubs();
+  } catch (e) {
+    SUBS.loaded = true;
+    renderSubs();
+    const notice = $('#subs-notice');
+    notice.hidden = false;
+    notice.className = 'notice warn';
+    notice.replaceChildren(el('span', {}, e.code === 'SIGN_IN_REQUIRED' || e.code === 'COOKIES_REJECTED' ? 'Subscriptions need your YouTube login (TV tab).' : e.message));
+    throw e;
+  } finally {
+    SUBS.loading = false;
+    $('#subs-loading').hidden = true;
+  }
+  fillIfShort('subs-sentinel', 'subs', () => Boolean(SUBS.continuation), () => loadSubs(false));
+}
+new IntersectionObserver((entries) => {
+  if (entries.some((e) => e.isIntersecting) && ui.view === 'subs' && SUBS.loaded) loadSubs(false).catch(showError);
+}, { rootMargin: '600px' }).observe($('#subs-sentinel'));
+
+// ---------------------------------------------------------------------------
 // Remote wiring
 // ---------------------------------------------------------------------------
 function renderTvChip() {
@@ -1390,7 +1590,9 @@ function renderTvChip() {
 }
 
 remote.addEventListener('status', () => {
+  if (remote.status === 'connected') ui.shutDown = false;
   if (remote.status !== 'connected') ui.owned = false;
+  syncMedia();
   renderTvChip();
   renderTvView();
   renderMini();
@@ -1428,6 +1630,7 @@ remote.addEventListener('player', () => {
     }
   }
   applyPendingSeek();
+  syncMedia();
   rememberPosition();
   renderMini();
   renderQueue();
@@ -1437,7 +1640,6 @@ remote.addEventListener('player', () => {
 // Smooth playhead while playing.
 setInterval(() => {
   if (!remote.connected || !remote.player.videoId) return;
-  sponsorTick();
   if (ui.npOpen && !ui.scrubbing) paintScrub(remote.estimatedTime());
   else $('#mini-bar').style.width = `${remote.player.duration > 0 ? (remote.estimatedTime() / remote.player.duration) * 100 : 0}%`;
   if (Date.now() % 10000 < 1000) rememberPosition();
@@ -1447,7 +1649,7 @@ document.addEventListener('visibilitychange', () => {
   debug.log('app', `app ${document.visibilityState}`, { status: remote.status, tvVideo: remote.player.videoId, state: remote.player.state });
   if (document.visibilityState !== 'visible') return;
   if (remote.connected) remote.resume().catch(showError);
-  else if (store.settings.screen && store.settings.autoConnect) remote.connect().catch(showError);
+  else if (store.settings.screen && store.settings.autoConnect && !ui.shutDown) remote.connect().catch(showError);
 });
 window.addEventListener('error', (e) => debug.log('error', `uncaught: ${e.message}`, e.error && e.error.stack ? e.error.stack.split('\n').slice(0, 4).join(' | ') : undefined));
 window.addEventListener('unhandledrejection', (e) => debug.log('error', `unhandled rejection: ${e.reason && e.reason.message ? e.reason.message : String(e.reason)}`));
@@ -1526,7 +1728,7 @@ function renderTvView() {
         el('div', { class: 'kv' }, 'Token valid until', el('b', {}, screen.expiration ? new Date(screen.expiration).toLocaleString() : 'unknown')),
         el('div', { class: 'row' },
           remote.connected
-            ? el('button', { class: 'btn ghost', onclick: guard(() => remote.disconnect()) }, 'Disconnect')
+            ? el('button', { class: 'btn ghost danger', onclick: guard(shutDown) }, 'Done — shut down')
             : el('button', { class: 'btn primary', disabled: remote.status === 'connecting', onclick: guard(() => remote.connect()) }, 'Connect'),
           el('button', { class: 'btn ghost', onclick: guard(checkAvailability) }, 'Is the TV online?'),
           el('button', { class: 'btn ghost danger', onclick: guard(forgetTv) }, 'Forget TV')
@@ -1588,9 +1790,9 @@ function renderTvView() {
   const row = (key, label, hint) =>
     el('div', { class: 'setting-row' },
       el('div', { class: 'setting-text' }, label, el('small', {}, hint)),
-      el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: ads[key], onchange: (e) => { ads[key] = e.target.checked; store.saveSettings(); debug.log('app', `setting ads.${key} = ${ads[key]}`); if (key === 'sponsorBlock' && ads[key] && remote.player.videoId) loadSponsorSegments(remote.player.videoId).catch(showError); } }), el('span'))
+      el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: ads[key], onchange: (e) => { ads[key] = e.target.checked; store.saveSettings(); pushAdSettings(); debug.log('app', `setting ads.${key} = ${ads[key]}`); if (key === 'sponsorBlock' && ads[key] && remote.player.videoId) loadSponsorSegments(remote.player.videoId).catch(showError); } }), el('span'))
     );
-  const dodgeMax = el('select', { onchange: (e) => { ads.dodgeMax = Number(e.target.value); store.saveSettings(); } }, ...[1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeMax === n }, String(n))));
+  const dodgeMax = el('select', { onchange: (e) => { ads.dodgeMax = Number(e.target.value); store.saveSettings(); pushAdSettings(); } }, ...[1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeMax === n }, String(n))));
   const cats = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic'];
   panels.push(
     el('div', { class: 'panel' },
@@ -1602,7 +1804,7 @@ function renderTvView() {
       row('muteAds', 'Mute during ads', 'Mutes the TV on ad start and unmutes when the ad ends.'),
       row('sponsorBlock', 'Skip sponsor segments (SponsorBlock)', 'Seeks past community-marked segments. Purple marks on the progress bar.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'SponsorBlock categories'),
-        el('div', { class: 'row', style: 'margin:0; justify-content:flex-end' }, ...cats.map((c) => el('label', { class: 'chip', style: `height:28px;font-size:12px;${ads.sponsorCategories.includes(c) ? 'background:#fff;color:#000' : ''}` }, el('input', { type: 'checkbox', style: 'display:none', checked: ads.sponsorCategories.includes(c), onchange: (e) => { ads.sponsorCategories = e.target.checked ? [...ads.sponsorCategories, c] : ads.sponsorCategories.filter((x) => x !== c); store.saveSettings(); renderTvView(); } }), c)))),
+        el('div', { class: 'row', style: 'margin:0; justify-content:flex-end' }, ...cats.map((c) => el('label', { class: 'chip', style: `height:28px;font-size:12px;${ads.sponsorCategories.includes(c) ? 'background:#fff;color:#000' : ''}` }, el('input', { type: 'checkbox', style: 'display:none', checked: ads.sponsorCategories.includes(c), onchange: (e) => { ads.sponsorCategories = e.target.checked ? [...ads.sponsorCategories, c] : ads.sponsorCategories.filter((x) => x !== c); store.saveSettings(); pushAdSettings(); renderTvView(); } }), c)))),
       el('p', {}, `Defaults: ${Object.entries(AD_DEFAULTS).filter(([k]) => typeof AD_DEFAULTS[k] === 'boolean').map(([k, v]) => `${k} ${v ? 'on' : 'off'}`).join(', ')}.`)
     )
   );

@@ -37,7 +37,23 @@ Save to Watch Later or any playlist (or a new one), a Library tab with Watch
 Later, watch history and your playlists (Play all / Queue all), mini player,
 installable to the Android home screen, and a built-in debug log.
 
-Everything under Library, plus rating and saving, needs your cookies: YouTube
+Also: a **Subs** tab (your subscriptions feed with a horizontal strip of
+channel avatars to filter by channel), **remove from recommendations** in the
+video sheet on Home (YouTube's own "Not interested" / "Don't recommend
+channel" when YouTube provides them, plus a local "Hide from my feed" that
+always works and is remembered), and **notification / lock-screen controls**:
+while the TV plays, the phone shows a media notification with play/pause,
+next, previous and seek. Android only shows that for a page playing audio, so
+the app plays silence; it starts on your first tap after the TV starts
+playing.
+
+**Swipe on any video card** (Home, Subs, Search, Related, Watch later):
+swipe right to add it to the queue, swipe left to get rid of it (hidden for
+good on Home/Subs, plus YouTube's "Not interested" when offered; removed from
+Watch later in that list). Leave it alone to keep it for later. A short swipe
+springs back; tapping still opens the Play now / Play next / Add to queue sheet.
+
+Everything under Library and Subs, plus rating, saving and "Not interested", needs your cookies: YouTube
 only answers those calls for a signed-in account.
 
 ## Ads: what can be done over this protocol, and what MyTube does
@@ -151,6 +167,29 @@ with its stack).
 
 Local run: `npm install && npm start` → http://localhost:8080.
 
+### Required Cloud Run settings (the server holds the TV connection)
+
+The connection to the Xbox and the whole ad engine (auto-skip, dodge, mute,
+SponsorBlock) run **on the server**, not the phone, because Android freezes a
+web app's timers when the screen is off or another app is in front. The
+phone just attaches to the server's TV session to show state and send
+buttons. That needs:
+
+* **Maximum number of instances = 1.** The TV session lives in that
+  instance's memory; a second instance would not know about it.
+* **Request timeout = 600 s or more.** While you watch, the server keeps one
+  request open to itself (`/api/remote/hold`, renewed every 9 minutes) so
+  Cloud Run keeps its CPU running with ordinary request-based billing.
+* **Minimum instances = 0 is fine.** Press **Done — shut down** (Now
+  Playing screen, or the TV tab) when you finish: the session closes at once,
+  the keep-alive stops, and Cloud Run scales to zero. If you forget, the
+  session closes itself 15 minutes after the TV goes idle with no phone
+  contact. Play now reconnects automatically next time.
+
+Cloud Run → Logs shows every `[session …]` line (ad start, dodge armed,
+dodge, forced seek, keep-alive), and the same lines appear in the phone's
+debug log as `server` entries.
+
 ### Where the cookies live: on the phone
 
 The phone keeps the cookies (browser storage) and sends them with each
@@ -171,7 +210,7 @@ once more before giving up on a 401). The phone stores every
 refreshed copy, so nothing is lost when the instance shuts down. `GET /api/cookies/status` shows the jar's state; Cloud Run logs show
 every `[cookies]` update and rotation.
 
-### Keep it fast: minimum instances = 1
+### Speed
 
 Every button press is phone → Cloud Run → YouTube → Xbox. YouTube's part is
 about 150 ms. A cold Cloud Run instance adds seconds, so set **Minimum number
