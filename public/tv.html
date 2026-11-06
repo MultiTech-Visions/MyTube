@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyTube TV screen</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #000; color: #f1f1f1; font-family: "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+    #idle { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; text-align: center; }
+    #idle .mark { width: 120px; height: 84px; background: #f00; border-radius: 22px; position: relative; }
+    #idle .mark::after { content: ""; position: absolute; left: 46px; top: 22px; border-left: 38px solid #fff; border-top: 20px solid transparent; border-bottom: 20px solid transparent; }
+    #code { font-size: 120px; font-weight: 700; letter-spacing: 24px; }
+    #idle p { font-size: 28px; color: #aaa; margin: 0; max-width: 1100px; }
+    #stage { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }
+    #stage.on { display: flex; }
+    #stage iframe { border: 0; width: min(100vw, 1100px); height: 100vh; background: #000; color-scheme: dark; }
+    #stage video { width: 100vw; height: 100vh; background: #000; }
+    #status { position: absolute; left: 24px; bottom: 16px; font-size: 18px; color: #666; }
+    #err { color: #ff8a80; }
+  </style>
+</head>
+<body>
+  <div id="idle">
+    <div class="mark"></div>
+    <div id="code">····</div>
+    <p>On your phone: MyTube → TV tab → <b>Send to TV screen</b> → enter this code once, then paste an X post or video link.</p>
+    <p>Pin this page to Home in Edge so it is one click next time.</p>
+  </div>
+  <div id="stage"></div>
+  <div id="status"></div>
+  <script>
+    // Plain script (no modules) so older Edge builds on the Xbox run it as-is.
+    const KEY = 'mytube.tvcode';
+    const $ = (id) => document.getElementById(id);
+    let code = null, cursor = 0;
+    function status(t, isErr) { $('status').innerHTML = isErr ? '<span id="err"></span>' : ''; (isErr ? $('err') : $('status')).textContent = t; }
+
+    async function register() {
+      let prev = null;
+      try { prev = localStorage.getItem(KEY); } catch (e) { /* private window: a new code each time */ }
+      const r = await fetch('/api/cast/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ previous: prev }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error.message);
+      code = j.code;
+      try { localStorage.setItem(KEY, code); } catch (e) { /* see above */ }
+      $('code').textContent = code;
+    }
+
+    function show(item) {
+      const stage = $('stage');
+      if (item.kind === 'control') {
+        const v = stage.querySelector('video');
+        if (!v) return;
+        if (item.action === 'play') v.play().catch(() => status('The browser wants one press first: select the video and press A.', true));
+        if (item.action === 'pause') v.pause();
+        if (item.action === 'seekBy') v.currentTime = Math.max(0, v.currentTime + item.value);
+        if (item.action === 'stop') { stage.classList.remove('on'); stage.innerHTML = ''; $('idle').style.display = ''; }
+        return;
+      }
+      $('idle').style.display = 'none';
+      stage.innerHTML = '';
+      stage.classList.add('on');
+      if (item.kind === 'x') {
+        // X's official embed player (the same one news sites use). Play it with the controller.
+        const f = document.createElement('iframe');
+        f.src = 'https://platform.twitter.com/embed/Tweet.html?id=' + encodeURIComponent(item.id) + '&theme=dark&dnt=true&hideThread=true';
+        f.allow = 'autoplay; fullscreen; encrypted-media';
+        f.allowFullscreen = true;
+        stage.appendChild(f);
+        status('X post ' + item.id + ' — select the video and press A to play; press the view button for full screen.');
+      } else if (item.kind === 'video') {
+        const v = document.createElement('video');
+        v.src = item.url; v.controls = true; v.autoplay = true; v.playsInline = true;
+        v.addEventListener('error', () => status('This video could not be played: ' + item.url, true));
+        stage.appendChild(v);
+        status('');
+        // Edge may block autoplay until the page has had one controller press.
+        v.play().catch(() => status('Press A to start (the browser blocked autoplay until the first press).', true));
+      }
+    }
+
+    async function loop() {
+      for (;;) {
+        try {
+          const r = await fetch('/api/cast/wait?code=' + code + '&cursor=' + cursor, { cache: 'no-store' });
+          const j = await r.json();
+          if (r.status === 404) { await register(); continue; }
+          if (!r.ok) throw new Error(j.error.message);
+          for (const item of j.items) { cursor = item.seq; show(item); }
+        } catch (e) {
+          status('Connection problem: ' + e.message + ' (retrying)', true);
+          await new Promise((res) => setTimeout(res, 3000));
+        }
+      }
+    }
+    register().then(loop).catch((e) => status('Could not start: ' + e.message, true));
+  </script>
+</body>
+</html>

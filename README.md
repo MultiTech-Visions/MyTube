@@ -53,6 +53,19 @@ video count, description), with **Videos** (Latest / Popular / Oldest),
 **Playlists** (open one, Play all / Queue all) and **Search** within the
 channel. The phone's Back button closes it.
 
+**Send to TV screen (non-YouTube videos):** the Xbox's YouTube app can only
+play YouTube videos, so other videos go to a MyTube page in **Microsoft Edge
+on the Xbox**: open `https://<your-service>/tv` once and pin it to Home; it
+shows a 4-digit code. In the phone's TV tab → Send to TV screen, enter the
+code (remembered) and paste a link:
+
+* **X / Twitter posts** open full-screen in X's own official embed player;
+  press play with the controller (X's player cannot be driven from another
+  site, so the phone's play/pause do not reach it). MyTube does not download
+  videos from X.
+* **Direct video files** (`.mp4`, `.webm`) play in a full-screen player that
+  the phone controls (play, pause, ±10 s, close).
+
 **Swipe on any video card** (Home, Subs, Search, Related, Watch later):
 swipe right to add it to the queue, swipe left to get rid of it (hidden for
 good on Home/Subs, plus YouTube's "Not interested" when offered; removed from
