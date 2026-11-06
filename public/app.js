@@ -2024,6 +2024,41 @@ function renderTvView() {
     );
   }
 
+  // --- Send to TV screen (X posts / video files, via the /tv page in Edge on the Xbox)
+  const castCode = el('input', { class: 'field code-field', inputmode: 'numeric', maxlength: '4', placeholder: '0000', value: s.castCode || '' });
+  const castLink = el('input', { class: 'field', placeholder: 'Paste an X post link or a .mp4 link', autocomplete: 'off' });
+  const castSend = async (body) => {
+    const code = castCode.value.replace(/\D/g, '');
+    if (code.length !== 4) throw new Error('Enter the 4-digit code shown on the TV screen page');
+    const res = await api('/api/cast/send', { method: 'POST', body: { code, ...body } });
+    if (s.castCode !== code) {
+      s.castCode = code; // remembered only once the TV screen accepted it
+      store.saveSettings();
+    }
+    debug.log('app', `sent to TV screen ${code}`, body);
+    return res;
+  };
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Send to TV screen'),
+      el('p', {}, 'For videos that are not on YouTube (X/Twitter posts, video files). On the Xbox open Microsoft Edge at ', el('b', {}, `${location.host}/tv`), ' and pin it to Home; it shows a 4-digit code.'),
+      castCode,
+      el('div', { style: 'margin-top:8px' }, castLink),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn ghost', onclick: guard(async () => { castLink.value = (await navigator.clipboard.readText()).trim(); }) }, 'Paste'),
+        el('button', { class: 'btn primary', onclick: guard(async () => { if (!castLink.value.trim()) throw new Error('Paste a link first'); const r = await castSend({ link: castLink.value.trim() }); toast(r.item.kind === 'x' ? 'Sent. Press play on the TV with the controller.' : 'Playing on the TV screen'); }) }, 'Send')
+      ),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn ghost small', onclick: guard(() => castSend({ action: 'pause' })) }, 'Pause'),
+        el('button', { class: 'btn ghost small', onclick: guard(() => castSend({ action: 'play' })) }, 'Play'),
+        el('button', { class: 'btn ghost small', onclick: guard(() => castSend({ action: 'seekBy', value: -10 })) }, '−10 s'),
+        el('button', { class: 'btn ghost small', onclick: guard(() => castSend({ action: 'seekBy', value: 10 })) }, '+10 s'),
+        el('button', { class: 'btn ghost small danger', onclick: guard(() => castSend({ action: 'stop' })) }, 'Close')
+      ),
+      el('p', {}, 'Play/pause/seek work for video files. X posts use X\'s own player, which only the controller can drive.')
+    )
+  );
+
   // --- Remote name
   const nameInput = el('input', { class: 'field', value: s.deviceName, maxlength: '40' });
   panels.push(

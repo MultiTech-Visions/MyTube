@@ -1,7 +1,7 @@
 /* MyTube service worker: makes the app installable and lets the shell open
    offline. Static files are network-first (so a redeploy shows up on the next
    open) with a cache fallback; /api is never cached. */
-const CACHE = 'mytube-shell-v5';
+const CACHE = 'mytube-shell-v6';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/api.js', '/store.js', '/lounge.js', '/icons.js', '/debug.js', '/media.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
