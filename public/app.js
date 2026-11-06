@@ -505,19 +505,31 @@ function tvQueueIsOurs() {
 }
 
 async function playNow(v) {
+  const t0 = performance.now();
   debug.log('app', `playNow ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned });
   store.rememberVideo(v);
   removeDuplicate(v.videoId);
   const at = insertAfterCurrent(queueItem(v));
   Q.currentIndex = at;
   saveQueue();
-  if (!remote.connected && store.settings.screen) await remote.connect(); // e.g. after "Done — shut down"
+  toast(`Starting on TV: ${v.title}`);
+  let connectMs = 0;
+  if (!remote.connected && store.settings.screen) {
+    // e.g. after "Done — shut down"
+    await remote.connect();
+    connectMs = Math.round(performance.now() - t0);
+  }
   if (!remote.connected) {
     toast('Queued. Connect to the TV to play it.');
     return;
   }
   await pushQueue(at, 0);
-  toast(`Playing: ${v.title}`);
+  debug.log('app', `playNow sent in ${Math.round(performance.now() - t0)} ms${connectMs ? ` (of which reconnect ${connectMs} ms)` : ''}`);
+}
+
+/** Wakes the server while you browse, so the first button press does not pay for a cold start. */
+function prewarm() {
+  fetch('/api/ping', { cache: 'no-store' }).catch(() => {});
 }
 
 async function playNext(v) {
@@ -1876,6 +1888,7 @@ setInterval(() => {
 }, 1000);
 
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') prewarm();
   debug.log('app', `app ${document.visibilityState}`, { status: remote.status, tvVideo: remote.player.videoId, state: remote.player.state });
   if (document.visibilityState !== 'visible') return;
   if (remote.connected) remote.resume().catch(showError);
@@ -2081,6 +2094,7 @@ async function forgetTv() {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+prewarm();
 debug.log('app', 'app start', { standalone: window.matchMedia('(display-mode: standalone)').matches, paired: Boolean(store.settings.screen), queue: Q.items.length });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(showError);
 renderTvChip();
