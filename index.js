@@ -175,6 +175,9 @@ async function api(req, res) {
       const body = jsonBody(req);
       return sendJson(res, 200, await innertube.createPlaylist(cookiesFor(req), requireString(body, 'title', 'body'), typeof body.videoId === 'string' ? body.videoId : null));
     }
+    case 'GET /api/ping': {
+      return sendJson(res, 200, { ok: true });
+    }
     case 'GET /api/cookies/status': {
       return sendJson(res, 200, { source: req.get('X-YT-Cookies') ? 'phone' : process.env.YT_COOKIES ? 'server' : 'none', jar: innertube.jarStatus(cookiesFor(req)) });
     }

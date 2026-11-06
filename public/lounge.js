@@ -296,7 +296,15 @@ export class Remote extends EventTarget {
    */
   send(name, params = {}) {
     if (!QUEUE_COMMANDS.has(name)) return this._send(name, params, true);
-    const run = () => this._send(name, params, true);
+    if (name === 'setPlaylist') {
+      // Replaces the whole queue: goes out now; queued edits still waiting are stale and dropped.
+      this._queueEpoch = (this._queueEpoch || 0) + 1;
+      const p = this._send(name, params, true);
+      this._chain = p.catch(() => {});
+      return p;
+    }
+    const epoch = this._queueEpoch || 0;
+    const run = () => ((this._queueEpoch || 0) !== epoch ? { ok: true, superseded: true } : this._send(name, params, true));
     const p = this._chain.then(run, run);
     this._chain = p.catch(() => {});
     return p;
