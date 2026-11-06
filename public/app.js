@@ -139,13 +139,16 @@ $('#btn-refresh').addEventListener('click', guard(() => loadFeed(true)));
 // ---------------------------------------------------------------------------
 function card(v, { compact = false } = {}) {
   const sub = joinMeta(v.channel, v.views, v.published);
-  return el(
+  const node = el(
     'button',
-    { class: 'card', type: 'button', onclick: () => openSheet(v) },
+    { class: 'card', type: 'button', onclick: () => { if (!swipe.justSwiped) openSheet(v); } },
     el('div', { class: 'thumb' }, el('img', { src: v.thumbnail, alt: '', loading: 'lazy' }), v.duration ? el('span', { class: `dur${v.isLive ? ' live' : ''}` }, v.duration) : null),
     el('div', { class: 'card-text' }, el('div', {}, el('div', { class: 'card-title' }, v.title), el('div', { class: 'card-sub' }, sub)))
   );
+  cardVideo.set(node, v);
+  return node;
 }
+const cardVideo = new WeakMap();
 
 /**
  * After a page loads, keep loading while the end-of-list marker is still on
@@ -1441,6 +1444,116 @@ document.addEventListener('pointerdown', () => {
 }, true);
 
 // ---------------------------------------------------------------------------
+// Swipe on video cards: right = add to queue, left = get rid of it
+// ---------------------------------------------------------------------------
+const swipe = { justSwiped: false };
+
+/** What a left swipe means in each list; null = no left action there. */
+function leftAction(listId) {
+  if (listId === 'feed-list' || listId === 'subs-list' || listId === 'search-list' || listId === 'np-related') return { label: 'Remove', run: dismissVideo };
+  if (listId === 'library-list' && !L.playlist && L.tab === 'WL') return { label: 'Remove from Watch later', run: removeFromWatchLater };
+  return null;
+}
+
+/** Left swipe on a recommendation: hide it for good, and tell YouTube "Not interested" when it offered that. */
+async function dismissVideo(v) {
+  store.hide(v.videoId);
+  const notInterested = (v.feedback || []).find((f) => /not interested/i.test(f.label));
+  debug.log('app', `swiped away ${v.videoId}${notInterested ? ' (+ Not interested)' : ''}`);
+  if (notInterested) await apiSendFeedback(notInterested.token);
+}
+async function removeFromWatchLater(v) {
+  L.items = L.items.filter((x) => x.videoId !== v.videoId);
+  await apiEditPlaylist('WL', v.videoId, 'remove');
+  debug.log('app', `swiped ${v.videoId} out of Watch later`);
+}
+
+function attachSwipe(container) {
+  let card = null, bg = null, startX = 0, startY = 0, dx = 0, horizontal = null;
+  const reset = () => {
+    if (bg) bg.remove();
+    card = bg = null;
+    horizontal = null;
+    dx = 0;
+  };
+  container.addEventListener('touchstart', (e) => {
+    const c = e.target.closest('.card');
+    if (!c || e.touches.length !== 1 || !cardVideo.has(c)) return;
+    card = c;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    horizontal = null;
+    dx = 0;
+  }, { passive: true });
+  container.addEventListener('touchmove', (e) => {
+    if (!card) return;
+    const x = e.touches[0].clientX - startX;
+    const y = e.touches[0].clientY - startY;
+    if (horizontal === null) {
+      if (Math.abs(x) < 12 && Math.abs(y) < 12) return;
+      horizontal = Math.abs(x) > Math.abs(y) * 1.4;
+      if (!horizontal) {
+        card = null; // vertical scroll: leave it alone
+        return;
+      }
+      bg = el('div', { class: 'swipe-bg' }, el('span', { class: 'swipe-right' }, '+ Queue'), el('span', { class: 'swipe-left' }, (leftAction(container.id) || { label: '' }).label));
+      bg.style.top = `${card.offsetTop}px`;
+      bg.style.height = `${card.offsetHeight}px`;
+      container.insertBefore(bg, card);
+      card.style.transition = 'none';
+    }
+    e.preventDefault();
+    dx = x;
+    if (dx < 0 && !leftAction(container.id)) dx = Math.max(dx, -40); // no left action here: just a nudge
+    card.style.transform = `translateX(${dx}px)`;
+    bg.classList.toggle('go-right', dx > 0);
+    bg.classList.toggle('go-left', dx < 0);
+    bg.classList.toggle('armed', Math.abs(dx) > card.offsetWidth * 0.3);
+  }, { passive: false });
+  const end = () => {
+    if (!card || !horizontal) return reset();
+    const c = card;
+    const v = cardVideo.get(c);
+    const w = c.offsetWidth;
+    const left = leftAction(container.id);
+    const commit = dx > w * 0.3 ? 'right' : dx < -w * 0.3 && left ? 'left' : null;
+    swipe.justSwiped = true;
+    setTimeout(() => (swipe.justSwiped = false), 350);
+    c.style.transition = 'transform .18s ease-out, opacity .18s';
+    const bgEl = bg;
+    card = bg = null;
+    if (!commit) {
+      c.style.transform = '';
+      setTimeout(() => bgEl.remove(), 180);
+      return;
+    }
+    if (commit === 'right') {
+      c.style.transform = '';
+      setTimeout(() => bgEl.remove(), 180);
+      addToQueue(v).catch(showError);
+      return;
+    }
+    // left: slide out, collapse, then do it
+    c.style.transform = `translateX(${-w}px)`;
+    c.style.opacity = '0';
+    setTimeout(() => {
+      bgEl.remove();
+      c.style.transition = 'height .2s, padding .2s';
+      c.style.height = `${c.offsetHeight}px`;
+      requestAnimationFrame(() => { c.style.height = '0px'; c.style.paddingBottom = '0px'; c.style.overflow = 'hidden'; });
+      setTimeout(() => c.remove(), 220);
+    }, 180);
+    left.run(v).then(() => toast(`${left.label}: ${v.title}`)).catch(showError);
+  };
+  container.addEventListener('touchend', end);
+  container.addEventListener('touchcancel', () => {
+    if (card) card.style.transform = '';
+    reset();
+  });
+}
+for (const id of ['feed-list', 'subs-list', 'search-list', 'library-list', 'np-related']) attachSwipe(document.getElementById(id));
+
+// ---------------------------------------------------------------------------
 // Subscriptions: feed + channel strip
 // ---------------------------------------------------------------------------
 const SUBS = { loaded: false, loading: false, items: [], continuation: null, channels: [], channel: null };
@@ -1461,7 +1574,8 @@ function renderSubs() {
     if (SUBS.channel.avatar) $('#subs-head-avatar').src = SUBS.channel.avatar;
     $('#subs-head-title').textContent = SUBS.channel.title;
   }
-  renderList($('#subs-list'), SUBS.items);
+  const hiddenSubs = new Set(store.hidden);
+  renderList($('#subs-list'), SUBS.items.filter((v) => !hiddenSubs.has(v.videoId)));
   if (SUBS.loaded && SUBS.items.length === 0) $('#subs-list').replaceChildren(el('p', { class: 'empty' }, 'No videos.'));
 }
 

@@ -308,3 +308,13 @@ ol.steps { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); font-size:
 .subchip.active span { color: var(--text); }
 .subs-head-avatar { width: 40px; height: 40px; border-radius: 50%; margin-left: 12px; }
 #sheet-feedback .btn.action { background: var(--surface-2); }
+
+/* Swipe on cards */
+.list { position: relative; }
+.card { position: relative; z-index: 1; background: var(--bg); touch-action: pan-y; }
+.swipe-bg { position: absolute; left: 0; right: 0; z-index: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; font-weight: 700; font-size: 16px; color: #fff; background: var(--surface-2); }
+.swipe-bg span { opacity: 0; transition: opacity .1s; }
+.swipe-bg.go-right { background: #1f5e2a; } .swipe-bg.go-right .swipe-right { opacity: .6; }
+.swipe-bg.go-left { background: #6b1d1d; } .swipe-bg.go-left .swipe-left { opacity: .6; }
+.swipe-bg.armed.go-right { background: #2ba640; } .swipe-bg.armed .swipe-right, .swipe-bg.armed .swipe-left { opacity: 1; }
+.swipe-bg.armed.go-left { background: #cc0000; }

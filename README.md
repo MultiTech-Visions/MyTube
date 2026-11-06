@@ -47,6 +47,12 @@ next, previous and seek. Android only shows that for a page playing audio, so
 the app plays silence; it starts on your first tap after the TV starts
 playing.
 
+**Swipe on any video card** (Home, Subs, Search, Related, Watch later):
+swipe right to add it to the queue, swipe left to get rid of it (hidden for
+good on Home/Subs, plus YouTube's "Not interested" when offered; removed from
+Watch later in that list). Leave it alone to keep it for later. A short swipe
+springs back; tapping still opens the Play now / Play next / Add to queue sheet.
+
 Everything under Library and Subs, plus rating, saving and "Not interested", needs your cookies: YouTube
 only answers those calls for a signed-in account.
 
