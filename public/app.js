@@ -6,11 +6,13 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
+import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, sendFeedback as apiSendFeedback } from './api.js';
 import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist, sponsorSegments as apiSponsorSegments } from './api.js';
 import { store, AD_DEFAULTS } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
 import { icon } from './icons.js';
 import * as debug from './debug.js';
+import { media } from './media.js';
 
 // ---------------------------------------------------------------------------
 // Tiny DOM helpers
@@ -124,6 +126,7 @@ function showView(name) {
   if (name === 'queue') renderQueue();
   if (name === 'tv') renderTvView();
   if (name === 'library' && !ui.library.loaded) loadLibrary(true).catch(showError);
+  if (name === 'subs' && !SUBS.loaded) loadSubs(true).catch(showError);
   window.scrollTo(0, 0);
 }
 for (const b of document.querySelectorAll('.navbtn')) b.addEventListener('click', () => showView(b.dataset.view));
@@ -180,7 +183,7 @@ async function loadFeed(reset) {
     f.signedIn = res.signedIn;
     f.loaded = true;
     debug.log('app', `home feed page: +${res.items.length} videos (total ${f.items.length}), more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
-    renderList($('#feed-list'), f.items);
+    renderList($('#feed-list'), visibleFeed());
     const notice = $('#feed-notice');
     if (!res.signedIn) {
       notice.hidden = false;
@@ -255,8 +258,32 @@ function openSheet(v) {
   $('#sheet-thumb').src = v.thumbnail;
   $('#sheet-title').textContent = v.title;
   $('#sheet-sub').textContent = joinMeta(v.channel, v.duration);
+  // Remove-from-recommendations options: YouTube's own ("Not interested", "Don't recommend channel")
+  // when the item came with them, plus a local hide that always works.
+  const fromHome = ui.view === 'home';
+  const opts = (v.feedback || []).map((f) => el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, f)) }, el('span', { class: 'ico', html: icon('hide') }), f.label));
+  if (fromHome) opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, null)) }, el('span', { class: 'ico', html: icon('hide') }), 'Hide from my feed'));
+  $('#sheet-feedback').replaceChildren(...opts);
   $('#sheet').hidden = false;
   $('#sheet-backdrop').hidden = false;
+}
+
+/** Hides the video locally at once (persisted), then tells YouTube when a token is available. */
+async function removeRecommendation(v, option) {
+  closeSheet();
+  store.hide(v.videoId);
+  renderList($('#feed-list'), visibleFeed());
+  debug.log('app', `removed recommendation ${v.videoId}${option ? ` via "${option.label}"` : ' (local hide)'}`);
+  if (!option) {
+    toast('Hidden from your feed');
+    return;
+  }
+  await apiSendFeedback(option.token);
+  toast(`${option.label}: YouTube will show fewer like this`);
+}
+function visibleFeed() {
+  const hidden = new Set(store.hidden);
+  return ui.feed.items.filter((v) => !hidden.has(v.videoId));
 }
 function closeSheet() {
   $('#sheet').hidden = true;
@@ -1380,6 +1407,106 @@ $('#library-playall').addEventListener('click', guard(async () => queueMany(awai
 $('#library-queueall').addEventListener('click', guard(async () => queueMany(await allPlaylistItems(), false)));
 
 // ---------------------------------------------------------------------------
+// Phone notification controls
+// ---------------------------------------------------------------------------
+media.setHandlers({
+  play: () => remote.play().catch(showError),
+  pause: () => remote.pause().catch(showError),
+  next: () => remote.next().catch(showError),
+  previous: () => remote.previous().catch(showError),
+  seekBy: (d) => remote.seekBy(d).catch(showError),
+  seekTo: (t) => remote.seekTo(t).catch(showError),
+});
+function syncMedia() {
+  const pl = remote.player;
+  if (!remote.connected || !pl.videoId) {
+    if (media.active) media.stop();
+    return;
+  }
+  const data = ui.watch.videoId === pl.videoId ? ui.watch.data : null;
+  const item = Q.items.find((it) => it.videoId === pl.videoId) || store.video(pl.videoId);
+  media.update({
+    title: remote.ad.active ? 'Ad playing on TV' : data ? data.video.title : item ? item.title : 'Playing on TV',
+    artist: data ? data.video.channel : item ? item.channel : '',
+    artwork: `https://i.ytimg.com/vi/${pl.videoId}/hqdefault.jpg`,
+    playing: pl.state === PLAYER_STATE.PLAYING || pl.state === PLAYER_STATE.AD || pl.state === PLAYER_STATE.BUFFERING,
+    position: remote.estimatedTime(),
+    duration: pl.duration,
+  });
+}
+/** Audio may only start from a tap: try on every tap while the TV plays and the notification is not up yet. */
+document.addEventListener('pointerdown', () => {
+  if (media.active || !media.supported || !remote.connected || !remote.player.videoId) return;
+  media.start().then((ok) => { if (ok) { debug.log('app', 'phone notification controls started'); syncMedia(); } }).catch((e) => debug.log('error', `notification controls could not start: ${e.message}`));
+}, true);
+
+// ---------------------------------------------------------------------------
+// Subscriptions: feed + channel strip
+// ---------------------------------------------------------------------------
+const SUBS = { loaded: false, loading: false, items: [], continuation: null, channels: [], channel: null };
+
+function renderSubs() {
+  const strip = $('#subs-strip');
+  const chip = (active, img, label, onclick) => el('button', { class: `subchip${active ? ' active' : ''}`, type: 'button', onclick }, img, el('span', {}, label));
+  strip.replaceChildren(
+    chip(!SUBS.channel, el('div', { class: 'all' }, 'All'), 'All', () => { SUBS.channel = null; loadSubs(true).catch(showError); }),
+    ...SUBS.channels.map((c) => chip(SUBS.channel && SUBS.channel.channelId === c.channelId, c.avatar ? el('img', { src: c.avatar, alt: '', loading: 'lazy' }) : el('div', { class: 'all' }, (c.title || '?').slice(0, 1).toUpperCase()), c.title, () => {
+      SUBS.channel = SUBS.channel && SUBS.channel.channelId === c.channelId ? null : c;
+      loadSubs(true).catch(showError);
+    }))
+  );
+  $('#subs-head').hidden = !SUBS.channel;
+  if (SUBS.channel) {
+    $('#subs-head-avatar').hidden = !SUBS.channel.avatar;
+    if (SUBS.channel.avatar) $('#subs-head-avatar').src = SUBS.channel.avatar;
+    $('#subs-head-title').textContent = SUBS.channel.title;
+  }
+  renderList($('#subs-list'), SUBS.items);
+  if (SUBS.loaded && SUBS.items.length === 0) $('#subs-list').replaceChildren(el('p', { class: 'empty' }, 'No videos.'));
+}
+
+async function loadSubs(reset) {
+  if (SUBS.loading) return;
+  if (reset) {
+    SUBS.items = [];
+    SUBS.continuation = null;
+    SUBS.loaded = false;
+    renderSubs();
+    window.scrollTo(0, 0);
+  } else if (!SUBS.continuation) return;
+  SUBS.loading = true;
+  $('#subs-loading').hidden = false;
+  $('#subs-notice').hidden = true;
+  try {
+    let res;
+    if (SUBS.channel) res = await apiChannelVideos(SUBS.channel.channelId, reset ? null : SUBS.continuation);
+    else {
+      res = await apiSubscriptions(reset ? null : SUBS.continuation);
+      if (reset) SUBS.channels = res.channels;
+    }
+    SUBS.items = SUBS.items.concat(res.items);
+    SUBS.continuation = res.continuation;
+    SUBS.loaded = true;
+    renderSubs();
+  } catch (e) {
+    SUBS.loaded = true;
+    renderSubs();
+    const notice = $('#subs-notice');
+    notice.hidden = false;
+    notice.className = 'notice warn';
+    notice.replaceChildren(el('span', {}, e.code === 'SIGN_IN_REQUIRED' || e.code === 'COOKIES_REJECTED' ? 'Subscriptions need your YouTube login (TV tab).' : e.message));
+    throw e;
+  } finally {
+    SUBS.loading = false;
+    $('#subs-loading').hidden = true;
+  }
+  fillIfShort('subs-sentinel', 'subs', () => Boolean(SUBS.continuation), () => loadSubs(false));
+}
+new IntersectionObserver((entries) => {
+  if (entries.some((e) => e.isIntersecting) && ui.view === 'subs' && SUBS.loaded) loadSubs(false).catch(showError);
+}, { rootMargin: '600px' }).observe($('#subs-sentinel'));
+
+// ---------------------------------------------------------------------------
 // Remote wiring
 // ---------------------------------------------------------------------------
 function renderTvChip() {
@@ -1391,6 +1518,7 @@ function renderTvChip() {
 
 remote.addEventListener('status', () => {
   if (remote.status !== 'connected') ui.owned = false;
+  syncMedia();
   renderTvChip();
   renderTvView();
   renderMini();
@@ -1428,6 +1556,7 @@ remote.addEventListener('player', () => {
     }
   }
   applyPendingSeek();
+  syncMedia();
   rememberPosition();
   renderMini();
   renderQueue();

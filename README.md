@@ -37,7 +37,17 @@ Save to Watch Later or any playlist (or a new one), a Library tab with Watch
 Later, watch history and your playlists (Play all / Queue all), mini player,
 installable to the Android home screen, and a built-in debug log.
 
-Everything under Library, plus rating and saving, needs your cookies: YouTube
+Also: a **Subs** tab (your subscriptions feed with a horizontal strip of
+channel avatars to filter by channel), **remove from recommendations** in the
+video sheet on Home (YouTube's own "Not interested" / "Don't recommend
+channel" when YouTube provides them, plus a local "Hide from my feed" that
+always works and is remembered), and **notification / lock-screen controls**:
+while the TV plays, the phone shows a media notification with play/pause,
+next, previous and seek. Android only shows that for a page playing audio, so
+the app plays silence; it starts on your first tap after the TV starts
+playing.
+
+Everything under Library and Subs, plus rating, saving and "Not interested", needs your cookies: YouTube
 only answers those calls for a signed-in account.
 
 ## Ads: what can be done over this protocol, and what MyTube does

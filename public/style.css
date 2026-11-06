@@ -296,3 +296,15 @@ ol.steps { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); font-size:
 #np .np-head:active { background: rgba(255,255,255,.05); }
 #np .np-head::after { content: ""; position: absolute; left: 50%; top: calc(6px + var(--safe-t)); width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--surface-3); }
 .np { overscroll-behavior: contain; }
+
+/* Subscriptions channel strip */
+.substrip { display: flex; gap: 14px; overflow-x: auto; padding: 10px 16px 8px; scrollbar-width: none; }
+.substrip::-webkit-scrollbar { display: none; }
+.subchip { flex: none; width: 60px; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--text-2); }
+.subchip img, .subchip .all { width: 52px; height: 52px; border-radius: 50%; background: var(--surface-3); object-fit: cover; border: 2px solid transparent; }
+.subchip .all { display: flex; align-items: center; justify-content: center; color: var(--text); font-size: 13px; font-weight: 500; }
+.subchip span { width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subchip.active img, .subchip.active .all { border-color: #fff; }
+.subchip.active span { color: var(--text); }
+.subs-head-avatar { width: 40px; height: 40px; border-radius: 50%; margin-left: 12px; }
+#sheet-feedback .btn.action { background: var(--surface-2); }

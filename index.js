@@ -165,6 +165,18 @@ async function api(req, res) {
     case 'GET /api/cookies/status': {
       return sendJson(res, 200, { source: req.get('X-YT-Cookies') ? 'phone' : process.env.YT_COOKIES ? 'server' : 'none', jar: innertube.jarStatus(cookiesFor(req)) });
     }
+    case 'GET /api/subscriptions': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      return sendJson(res, 200, await innertube.subscriptions(cookiesFor(req), cont));
+    }
+    case 'GET /api/channel': {
+      const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
+      const id = cont ? '' : requireString(req.query, 'id', 'query');
+      return sendJson(res, 200, await innertube.channelVideos(cookiesFor(req), id, cont));
+    }
+    case 'POST /api/feedback': {
+      return sendJson(res, 200, await innertube.feedback(cookiesFor(req), requireString(jsonBody(req), 'token', 'body')));
+    }
     case 'GET /api/sponsorblock': {
       return sendJson(res, 200, await sponsorblock.segments(requireString(req.query, 'id', 'query')));
     }

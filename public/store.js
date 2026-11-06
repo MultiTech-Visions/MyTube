@@ -4,7 +4,7 @@
  * erase them. Corrupt JSON throws on purpose; only a missing key gets its
  * initial value.
  */
-const KEYS = { settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos' };
+const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos' };
 
 function load(key, initial) {
   const raw = localStorage.getItem(key);
@@ -79,6 +79,15 @@ export const store = {
   },
   video(videoId) {
     return this.videos[videoId];
+  },
+
+  /** Videos removed from recommendations; filtered out of Home even if YouTube sends them again. */
+  hidden: load(KEYS.hidden, []),
+  hide(videoId) {
+    if (this.hidden.includes(videoId)) return;
+    this.hidden.push(videoId);
+    if (this.hidden.length > 2000) this.hidden.splice(0, this.hidden.length - 2000);
+    save(KEYS.hidden, this.hidden);
   },
 
   clearAll() {
