@@ -18,7 +18,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.35; overscroll-behavior-y: contain; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.35; overscroll-behavior-y: contain; }
 body { padding-top: calc(var(--top-h) + var(--safe-t)); padding-bottom: calc(var(--nav-h) + var(--safe-b)); }
 body.has-mini { padding-bottom: calc(var(--nav-h) + var(--mini-h) + var(--safe-b)); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }

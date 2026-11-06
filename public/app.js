@@ -103,6 +103,7 @@ const remote = new Remote({
 // ---------------------------------------------------------------------------
 for (const n of document.querySelectorAll('[data-icon]')) n.innerHTML = icon(n.dataset.icon);
 $('#btn-refresh').innerHTML = icon('refresh');
+$('#btn-more').innerHTML = icon('more');
 $('#search-form button').innerHTML = icon('search');
 $('#mini-next').innerHTML = icon('next');
 $('#np-close').innerHTML = icon('down');
@@ -122,6 +123,7 @@ function showView(name) {
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== `view-${name}`;
   for (const b of document.querySelectorAll('.navbtn')) b.classList.toggle('active', b.dataset.view === name);
   $('#btn-refresh').hidden = name !== 'home';
+  $('#btn-more').hidden = name !== 'home';
   if (name === 'home' && !ui.feed.loaded) loadFeed(true).catch(showError);
   if (name === 'search') setTimeout(() => $('#search-input').focus(), 50);
   if (name === 'queue') renderQueue();
@@ -134,6 +136,44 @@ for (const b of document.querySelectorAll('.navbtn')) b.addEventListener('click'
 $('#brand').addEventListener('click', () => showView('home'));
 $('#tvchip').addEventListener('click', () => showView('tv'));
 $('#btn-refresh').addEventListener('click', guard(() => loadFeed(true)));
+$('#btn-more').addEventListener('click', guard(moreFeed));
+
+/**
+ * "Add more videos": the next page if YouTube gave one; otherwise a fresh
+ * batch of recommendations with everything already on screen (or hidden)
+ * filtered out, appended below without resetting the list.
+ */
+async function moreFeed() {
+  const f = ui.feed;
+  if (f.loading) return;
+  if (f.continuation) {
+    const before = f.items.length;
+    await loadFeed(false);
+    toast(`Added ${f.items.length - before} videos`);
+    return;
+  }
+  f.loading = true;
+  $('#btn-more').disabled = true;
+  try {
+    const res = await apiFeed(null);
+    const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
+    const fresh = res.items.filter((v) => !known.has(v.videoId));
+    f.items = f.items.concat(fresh);
+    f.continuation = res.continuation;
+    debug.log('app', `add more: fresh batch of ${res.items.length}, ${fresh.length} new, more pages: ${Boolean(res.continuation)}`, res.shape);
+    renderFeedList();
+    toast(fresh.length ? `Added ${fresh.length} videos` : 'YouTube sent nothing new right now. Try again in a minute.');
+  } finally {
+    f.loading = false;
+    $('#btn-more').disabled = false;
+  }
+}
+
+/** Feed cards plus the "Add more videos" button at the bottom. */
+function renderFeedList() {
+  renderList($('#feed-list'), visibleFeed());
+  if (ui.feed.items.length) $('#feed-list').append(el('button', { class: 'btn ghost', style: 'margin:8px 16px 16px', onclick: guard(moreFeed) }, 'Add more videos'));
+}
 
 // ---------------------------------------------------------------------------
 // Video cards
@@ -187,7 +227,7 @@ async function loadFeed(reset) {
     f.signedIn = res.signedIn;
     f.loaded = true;
     debug.log('app', `home feed page: +${res.items.length} videos (total ${f.items.length}), more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
-    renderList($('#feed-list'), visibleFeed());
+    renderFeedList();
     const notice = $('#feed-notice');
     if (!res.signedIn) {
       notice.hidden = false;
@@ -198,9 +238,6 @@ async function loadFeed(reset) {
       );
     } else {
       notice.hidden = true;
-    }
-    if (!res.continuation && f.items.length > 0) {
-      $('#feed-list').append(el('p', { class: 'empty' }, 'YouTube sent no more recommendations. TV tab → Debug log → Copy log shows what it sent.'));
     }
     if (f.items.length === 0 && reset) {
       $('#feed-list').replaceChildren(el('p', { class: 'empty' }, res.signedIn ? 'YouTube returned an empty feed.' : 'Nothing to show without your account. Use Search, or add cookies in the TV tab.'));
@@ -276,7 +313,7 @@ function openSheet(v) {
 async function removeRecommendation(v, option) {
   closeSheet();
   store.hide(v.videoId);
-  renderList($('#feed-list'), visibleFeed());
+  renderFeedList();
   debug.log('app', `removed recommendation ${v.videoId}${option ? ` via "${option.label}"` : ' (local hide)'}`);
   if (!option) {
     toast('Hidden from your feed');
