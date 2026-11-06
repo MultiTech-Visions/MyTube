@@ -144,28 +144,33 @@ $('#btn-more').addEventListener('click', guard(moreFeed));
  * filtered out, appended below without resetting the list.
  */
 async function moreFeed() {
+  const TARGET = 20; // new videos per tap
+  const MAX_REQUESTS = 6;
   const f = ui.feed;
   if (f.loading) return;
-  if (f.continuation) {
-    const before = f.items.length;
-    await loadFeed(false);
-    toast(`Added ${f.items.length - before} videos`);
-    return;
-  }
   f.loading = true;
   $('#btn-more').disabled = true;
+  $('#feed-loading').hidden = false;
+  let added = 0;
+  let requests = 0;
   try {
-    const res = await apiFeed(null);
-    const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
-    const fresh = res.items.filter((v) => !known.has(v.videoId));
-    f.items = f.items.concat(fresh);
-    f.continuation = res.continuation;
-    debug.log('app', `add more: fresh batch of ${res.items.length}, ${fresh.length} new, more pages: ${Boolean(res.continuation)}`, res.shape);
-    renderFeedList();
-    toast(fresh.length ? `Added ${fresh.length} videos` : 'YouTube sent nothing new right now. Try again in a minute.');
+    while (added < TARGET && requests < MAX_REQUESTS) {
+      requests += 1;
+      // Next page when YouTube offered one, otherwise a fresh batch of recommendations.
+      const res = await apiFeed(f.continuation || null);
+      const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
+      const fresh = res.items.filter((v) => !known.has(v.videoId));
+      f.items = f.items.concat(fresh);
+      f.continuation = res.continuation;
+      added += fresh.length;
+      debug.log('app', `add more #${requests}: ${res.items.length} received, ${fresh.length} new (total new ${added}), more pages: ${Boolean(res.continuation)}`, res.shape);
+      renderFeedList();
+    }
+    toast(added ? `Added ${added} videos` : 'YouTube sent nothing new right now. Try again in a minute.');
   } finally {
     f.loading = false;
     $('#btn-more').disabled = false;
+    $('#feed-loading').hidden = true;
   }
 }
 
