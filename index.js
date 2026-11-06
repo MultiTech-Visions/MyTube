@@ -173,7 +173,9 @@ async function api(req, res) {
     case 'GET /api/channel': {
       const cont = typeof req.query.continuation === 'string' ? req.query.continuation : null;
       const id = cont ? '' : requireString(req.query, 'id', 'query');
-      return sendJson(res, 200, await innertube.channelVideos(cookiesFor(req), id, cont));
+      const tab = typeof req.query.tab === 'string' ? req.query.tab : 'videos';
+      const q = typeof req.query.q === 'string' ? req.query.q : null;
+      return sendJson(res, 200, await innertube.channel(cookiesFor(req), id, tab, q, cont));
     }
     case 'POST /api/feedback': {
       return sendJson(res, 200, await innertube.feedback(cookiesFor(req), requireString(jsonBody(req), 'token', 'body')));

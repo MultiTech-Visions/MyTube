@@ -20,6 +20,7 @@
       <span class="brand-text">MyTube</span>
     </div>
     <div class="topbar-actions">
+      <button class="iconbtn" id="btn-more" aria-label="Add more videos" title="Add more videos"></button>
       <button class="iconbtn" id="btn-refresh" aria-label="Refresh" title="Refresh"></button>
       <button class="tvchip" id="tvchip" aria-label="TV connection"><span class="dot"></span><span class="label">No TV</span></button>
     </div>
@@ -171,6 +172,42 @@
       <div class="comments" id="np-comments" hidden></div>
       <div class="loading" id="np-loading" hidden><span class="spinner"></span></div>
     </div>
+  </section>
+
+  <!-- Channel page -->
+  <section class="chan" id="chan" hidden>
+    <div class="chan-top">
+      <button class="iconbtn" id="chan-back" aria-label="Back"></button>
+      <div class="chan-top-title" id="chan-top-title"></div>
+    </div>
+    <div class="chan-banner" id="chan-banner"></div>
+    <div class="chan-head">
+      <img class="chan-avatar" id="chan-avatar" alt="">
+      <div class="chan-id">
+        <div class="chan-title" id="chan-title"></div>
+        <div class="chan-meta" id="chan-meta"></div>
+      </div>
+    </div>
+    <button class="chan-desc" id="chan-desc" type="button"></button>
+    <div class="tabs chan-tabs" id="chan-tabs">
+      <button class="tab active" data-tab="videos">Videos</button>
+      <button class="tab" data-tab="playlists">Playlists</button>
+      <button class="tab" data-tab="search">Search</button>
+    </div>
+    <form class="searchbar" id="chan-search" hidden>
+      <input id="chan-search-input" type="search" placeholder="Search this channel" autocomplete="off" enterkeyhint="search">
+      <button type="submit" class="iconbtn" aria-label="Search"></button>
+    </form>
+    <div class="chips" id="chan-sorts"></div>
+    <div class="plhead" id="chan-plhead" hidden>
+      <button class="iconbtn" id="chan-plback" aria-label="Back to playlists"></button>
+      <div class="plhead-text"><div class="plhead-title" id="chan-pltitle"></div><div class="plhead-sub" id="chan-plsub"></div></div>
+      <button class="btn small" id="chan-playall">Play all</button>
+      <button class="btn small ghost" id="chan-queueall">Queue all</button>
+    </div>
+    <div class="list" id="chan-list"></div>
+    <div class="sentinel" id="chan-sentinel"></div>
+    <div class="loading" id="chan-loading" hidden><span class="spinner"></span></div>
   </section>
 
   <!-- Tap-a-video action sheet -->

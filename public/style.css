@@ -18,7 +18,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.35; overscroll-behavior-y: contain; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.35; overscroll-behavior-y: contain; }
 body { padding-top: calc(var(--top-h) + var(--safe-t)); padding-bottom: calc(var(--nav-h) + var(--safe-b)); }
 body.has-mini { padding-bottom: calc(var(--nav-h) + var(--mini-h) + var(--safe-b)); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
@@ -318,3 +318,23 @@ ol.steps { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); font-size:
 .swipe-bg.go-left { background: #6b1d1d; } .swipe-bg.go-left .swipe-left { opacity: .6; }
 .swipe-bg.armed.go-right { background: #2ba640; } .swipe-bg.armed .swipe-right, .swipe-bg.armed .swipe-left { opacity: 1; }
 .swipe-bg.armed.go-left { background: #cc0000; }
+
+/* Channel avatar on cards */
+.card-avatar { width: 36px; height: 36px; border-radius: 50%; flex: none; background: var(--surface-3); object-fit: cover; cursor: pointer; }
+.list.compact .card-avatar { display: none; }
+
+/* Channel page */
+.chan { position: fixed; inset: 0; z-index: 35; background: var(--bg); overflow-y: auto; padding-bottom: calc(24px + var(--safe-b)); }
+.chan-top { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: calc(4px + var(--safe-t)) 8px 4px; background: var(--bg); }
+.chan-top-title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chan-banner { margin: 0 16px; aspect-ratio: 6.2/1; border-radius: 12px; background: var(--surface) center/cover no-repeat; }
+.chan-banner:empty:not([style*="url"]) { display: none; }
+.chan-head { display: flex; align-items: center; gap: 14px; padding: 14px 16px 6px; }
+.chan-avatar { width: 72px; height: 72px; border-radius: 50%; background: var(--surface-3); object-fit: cover; flex: none; }
+.chan-id { min-width: 0; }
+.chan-title { font-size: 20px; font-weight: 700; }
+.chan-meta { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.chan-desc { display: block; width: 100%; text-align: left; padding: 4px 16px 8px; font-size: 13px; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 3.6em; overflow: hidden; }
+.chan-desc.open { max-height: none; color: var(--text); }
+.chan-tabs { position: sticky; top: calc(48px + var(--safe-t)); }
+.chan .tabs { margin-top: 2px; }

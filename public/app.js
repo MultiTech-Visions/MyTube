@@ -6,7 +6,7 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
-import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, sendFeedback as apiSendFeedback } from './api.js';
+import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, channelPage as apiChannelPage, sendFeedback as apiSendFeedback } from './api.js';
 import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist, sponsorSegments as apiSponsorSegments } from './api.js';
 import { store, AD_DEFAULTS } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
@@ -103,6 +103,7 @@ const remote = new Remote({
 // ---------------------------------------------------------------------------
 for (const n of document.querySelectorAll('[data-icon]')) n.innerHTML = icon(n.dataset.icon);
 $('#btn-refresh').innerHTML = icon('refresh');
+$('#btn-more').innerHTML = icon('more');
 $('#search-form button').innerHTML = icon('search');
 $('#mini-next').innerHTML = icon('next');
 $('#np-close').innerHTML = icon('down');
@@ -122,6 +123,7 @@ function showView(name) {
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== `view-${name}`;
   for (const b of document.querySelectorAll('.navbtn')) b.classList.toggle('active', b.dataset.view === name);
   $('#btn-refresh').hidden = name !== 'home';
+  $('#btn-more').hidden = name !== 'home';
   if (name === 'home' && !ui.feed.loaded) loadFeed(true).catch(showError);
   if (name === 'search') setTimeout(() => $('#search-input').focus(), 50);
   if (name === 'queue') renderQueue();
@@ -134,6 +136,44 @@ for (const b of document.querySelectorAll('.navbtn')) b.addEventListener('click'
 $('#brand').addEventListener('click', () => showView('home'));
 $('#tvchip').addEventListener('click', () => showView('tv'));
 $('#btn-refresh').addEventListener('click', guard(() => loadFeed(true)));
+$('#btn-more').addEventListener('click', guard(moreFeed));
+
+/**
+ * "Add more videos": the next page if YouTube gave one; otherwise a fresh
+ * batch of recommendations with everything already on screen (or hidden)
+ * filtered out, appended below without resetting the list.
+ */
+async function moreFeed() {
+  const f = ui.feed;
+  if (f.loading) return;
+  if (f.continuation) {
+    const before = f.items.length;
+    await loadFeed(false);
+    toast(`Added ${f.items.length - before} videos`);
+    return;
+  }
+  f.loading = true;
+  $('#btn-more').disabled = true;
+  try {
+    const res = await apiFeed(null);
+    const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
+    const fresh = res.items.filter((v) => !known.has(v.videoId));
+    f.items = f.items.concat(fresh);
+    f.continuation = res.continuation;
+    debug.log('app', `add more: fresh batch of ${res.items.length}, ${fresh.length} new, more pages: ${Boolean(res.continuation)}`, res.shape);
+    renderFeedList();
+    toast(fresh.length ? `Added ${fresh.length} videos` : 'YouTube sent nothing new right now. Try again in a minute.');
+  } finally {
+    f.loading = false;
+    $('#btn-more').disabled = false;
+  }
+}
+
+/** Feed cards plus the "Add more videos" button at the bottom. */
+function renderFeedList() {
+  renderList($('#feed-list'), visibleFeed());
+  if (ui.feed.items.length) $('#feed-list').append(el('button', { class: 'btn ghost', style: 'margin:8px 16px 16px', onclick: guard(moreFeed) }, 'Add more videos'));
+}
 
 // ---------------------------------------------------------------------------
 // Video cards
@@ -144,7 +184,24 @@ function card(v, { compact = false } = {}) {
     'button',
     { class: 'card', type: 'button', onclick: () => { if (!swipe.justSwiped) openSheet(v); } },
     el('div', { class: 'thumb' }, el('img', { src: v.thumbnail, alt: '', loading: 'lazy' }), v.duration ? el('span', { class: `dur${v.isLive ? ' live' : ''}` }, v.duration) : null),
-    el('div', { class: 'card-text' }, el('div', {}, el('div', { class: 'card-title' }, v.title), el('div', { class: 'card-sub' }, sub)))
+    el(
+      'div',
+      { class: 'card-text' },
+      v.channelId
+        ? el('img', {
+            class: 'card-avatar',
+            src: v.channelAvatar || '',
+            alt: v.channel,
+            loading: 'lazy',
+            role: 'button',
+            onclick: (e) => {
+              e.stopPropagation();
+              openChannel({ channelId: v.channelId, title: v.channel, avatar: v.channelAvatar || '' }).catch(showError);
+            },
+          })
+        : null,
+      el('div', {}, el('div', { class: 'card-title' }, v.title), el('div', { class: 'card-sub' }, sub))
+    )
   );
   cardVideo.set(node, v);
   return node;
@@ -187,7 +244,7 @@ async function loadFeed(reset) {
     f.signedIn = res.signedIn;
     f.loaded = true;
     debug.log('app', `home feed page: +${res.items.length} videos (total ${f.items.length}), more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
-    renderList($('#feed-list'), visibleFeed());
+    renderFeedList();
     const notice = $('#feed-notice');
     if (!res.signedIn) {
       notice.hidden = false;
@@ -198,9 +255,6 @@ async function loadFeed(reset) {
       );
     } else {
       notice.hidden = true;
-    }
-    if (!res.continuation && f.items.length > 0) {
-      $('#feed-list').append(el('p', { class: 'empty' }, 'YouTube sent no more recommendations. TV tab → Debug log → Copy log shows what it sent.'));
     }
     if (f.items.length === 0 && reset) {
       $('#feed-list').replaceChildren(el('p', { class: 'empty' }, res.signedIn ? 'YouTube returned an empty feed.' : 'Nothing to show without your account. Use Search, or add cookies in the TV tab.'));
@@ -276,7 +330,7 @@ function openSheet(v) {
 async function removeRecommendation(v, option) {
   closeSheet();
   store.hide(v.videoId);
-  renderList($('#feed-list'), visibleFeed());
+  renderFeedList();
   debug.log('app', `removed recommendation ${v.videoId}${option ? ` via "${option.label}"` : ' (local hide)'}`);
   if (!option) {
     toast('Hidden from your feed');
@@ -1510,7 +1564,183 @@ function attachSwipe(container) {
     reset();
   });
 }
-for (const id of ['feed-list', 'subs-list', 'search-list', 'library-list', 'np-related']) attachSwipe(document.getElementById(id));
+for (const id of ['feed-list', 'subs-list', 'search-list', 'library-list', 'np-related', 'chan-list']) attachSwipe(document.getElementById(id));
+
+// ---------------------------------------------------------------------------
+// Channel page
+// ---------------------------------------------------------------------------
+const CH = { channel: null, header: null, tab: 'videos', q: '', items: [], playlists: [], continuation: null, sorts: [], loading: false, playlist: null };
+$('#chan-back').innerHTML = icon('back');
+$('#chan-plback').innerHTML = icon('back');
+$('#chan-search button').innerHTML = icon('search');
+
+async function openChannel(seed) {
+  CH.channel = seed;
+  CH.header = null;
+  CH.tab = 'videos';
+  CH.q = '';
+  CH.playlist = null;
+  $('#chan-search-input').value = '';
+  $('#chan').hidden = false;
+  $('#chan').scrollTop = 0;
+  if (history.state !== 'channel') history.pushState('channel', ''); // phone Back closes the channel page
+  debug.log('app', `open channel ${seed.channelId} (${seed.title})`);
+  renderChannelHead();
+  await loadChannel(true);
+}
+function closeChannel() {
+  $('#chan').hidden = true;
+  CH.channel = null;
+}
+$('#chan-back').addEventListener('click', () => history.back());
+window.addEventListener('popstate', () => {
+  if (!$('#chan').hidden) closeChannel();
+});
+
+function renderChannelHead() {
+  const h = CH.header;
+  const seed = CH.channel;
+  const title = h ? h.title : seed.title;
+  $('#chan-top-title').textContent = title;
+  $('#chan-title').textContent = title;
+  const avatar = h ? h.avatar : seed.avatar;
+  $('#chan-avatar').hidden = !avatar;
+  if (avatar) $('#chan-avatar').src = avatar;
+  $('#chan-meta').textContent = h ? joinMeta(h.handle, h.subscribers, h.videoCount) : '';
+  const banner = $('#chan-banner');
+  banner.style.backgroundImage = h && h.banner ? `url("${h.banner}")` : '';
+  banner.hidden = !(h && h.banner);
+  const desc = $('#chan-desc');
+  desc.hidden = !(h && h.description);
+  desc.replaceChildren(h && h.description ? linkify(h.description) : '');
+}
+$('#chan-desc').addEventListener('click', (e) => {
+  if (e.target.closest('a')) return;
+  $('#chan-desc').classList.toggle('open');
+});
+
+function renderChannelList() {
+  for (const t of document.querySelectorAll('#chan-tabs .tab')) t.classList.toggle('active', t.dataset.tab === CH.tab);
+  $('#chan-search').hidden = CH.tab !== 'search';
+  const sorts = $('#chan-sorts');
+  sorts.hidden = !(CH.tab === 'videos' && CH.sorts.length);
+  sorts.replaceChildren(...CH.sorts.map((so) => el('button', { class: `chip${so.selected ? ' active' : ''}`, type: 'button', onclick: guard(() => sortChannel(so)) }, so.label)));
+  $('#chan-plhead').hidden = !CH.playlist;
+  if (CH.playlist) {
+    $('#chan-pltitle').textContent = CH.playlist.title;
+    $('#chan-plsub').textContent = joinMeta(CH.playlist.count, `${CH.items.length} loaded`);
+  }
+  const list = $('#chan-list');
+  if (CH.tab === 'playlists' && !CH.playlist) {
+    list.replaceChildren(...CH.playlists.map((pl) => el(
+      'button',
+      { class: 'plrow', type: 'button', onclick: guard(() => openChannelPlaylist(pl)) },
+      el('div', { class: 'thumb' }, pl.thumbnail ? el('img', { src: pl.thumbnail, alt: '', loading: 'lazy' }) : null, pl.count ? el('span', { class: 'dur' }, pl.count) : null),
+      el('div', { class: 'card-text' }, el('div', {}, el('div', { class: 'card-title' }, pl.title)))
+    )));
+    if (!CH.loading && CH.playlists.length === 0) list.replaceChildren(el('p', { class: 'empty' }, 'No playlists.'));
+    return;
+  }
+  if (CH.tab === 'search' && !CH.q) {
+    list.replaceChildren(el('p', { class: 'empty' }, 'Search this channel\'s videos.'));
+    return;
+  }
+  list.replaceChildren(...CH.items.map((v) => card(v)));
+  if (!CH.loading && CH.items.length === 0) list.replaceChildren(el('p', { class: 'empty' }, 'No videos.'));
+}
+
+/** Loads the current tab (first page on reset, otherwise the next page). */
+async function loadChannel(reset) {
+  if (CH.loading || !CH.channel) return;
+  if (!reset && !CH.continuation) return;
+  if (reset) {
+    CH.items = [];
+    CH.playlists = [];
+    CH.continuation = null;
+  }
+  if (CH.tab === 'search' && !CH.q && !CH.playlist) {
+    renderChannelList();
+    return;
+  }
+  CH.loading = true;
+  $('#chan-loading').hidden = false;
+  renderChannelList();
+  const id = CH.channel.channelId;
+  try {
+    let res;
+    if (CH.playlist) res = await apiPlaylist(CH.playlist.playlistId, reset ? null : CH.continuation);
+    else res = await apiChannelPage(id, CH.tab, CH.q, reset ? null : CH.continuation);
+    if (!CH.channel || CH.channel.channelId !== id) return; // closed or switched meanwhile
+    if (res.header) {
+      CH.header = res.header;
+      renderChannelHead();
+    }
+    if (reset && res.sorts && !CH.playlist) CH.sorts = res.sorts;
+    if (reset && CH.playlist && res.count) CH.playlist = { ...CH.playlist, title: res.title || CH.playlist.title, count: res.count };
+    CH.items = CH.items.concat(res.items || []);
+    CH.playlists = CH.playlists.concat(res.playlists || []);
+    CH.continuation = res.continuation;
+  } finally {
+    CH.loading = false;
+    $('#chan-loading').hidden = true;
+    renderChannelList();
+  }
+}
+async function sortChannel(so) {
+  if (CH.loading) return;
+  CH.sorts = CH.sorts.map((x) => ({ ...x, selected: x.label === so.label }));
+  CH.items = [];
+  CH.loading = true;
+  $('#chan-loading').hidden = false;
+  renderChannelList();
+  try {
+    const res = await apiChannelPage(null, null, null, so.token);
+    CH.items = res.items;
+    CH.continuation = res.continuation;
+  } finally {
+    CH.loading = false;
+    $('#chan-loading').hidden = true;
+    renderChannelList();
+  }
+}
+for (const t of document.querySelectorAll('#chan-tabs .tab')) {
+  t.addEventListener('click', () => {
+    CH.tab = t.dataset.tab;
+    CH.playlist = null;
+    loadChannel(true).catch(showError);
+    if (CH.tab === 'search') setTimeout(() => $('#chan-search-input').focus(), 50);
+  });
+}
+$('#chan-search').addEventListener('submit', (e) => {
+  e.preventDefault();
+  CH.q = $('#chan-search-input').value.trim();
+  $('#chan-search-input').blur();
+  loadChannel(true).catch(showError);
+});
+async function openChannelPlaylist(pl) {
+  CH.playlist = pl;
+  await loadChannel(true);
+}
+$('#chan-plback').addEventListener('click', () => {
+  CH.playlist = null;
+  loadChannel(true).catch(showError);
+});
+async function allChannelPlaylistItems() {
+  let items = CH.items.slice();
+  let cont = CH.continuation;
+  while (cont && items.length < 200) {
+    const res = await apiPlaylist(CH.playlist.playlistId, cont);
+    items = items.concat(res.items);
+    cont = res.continuation;
+  }
+  return items.slice(0, 200);
+}
+$('#chan-playall').addEventListener('click', guard(async () => queueMany(await allChannelPlaylistItems(), true)));
+$('#chan-queueall').addEventListener('click', guard(async () => queueMany(await allChannelPlaylistItems(), false)));
+// Infinite scroll inside the channel page (it scrolls itself, not the window)
+new IntersectionObserver((entries) => {
+  if (entries.some((e) => e.isIntersecting) && !$('#chan').hidden) loadChannel(false).catch(showError);
+}, { root: document.getElementById('chan'), rootMargin: '600px' }).observe($('#chan-sentinel'));
 
 // ---------------------------------------------------------------------------
 // Subscriptions: feed + channel strip

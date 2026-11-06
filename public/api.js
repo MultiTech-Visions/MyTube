@@ -73,5 +73,7 @@ export const createPlaylist = (title, videoId) => api('/api/playlist/create', { 
 export const subscriptions = (continuation) => api(`/api/subscriptions${continuation ? `?continuation=${encodeURIComponent(continuation)}` : ''}`);
 export const channelVideos = (id, continuation) =>
   api(continuation ? `/api/channel?continuation=${encodeURIComponent(continuation)}` : `/api/channel?id=${encodeURIComponent(id)}`);
+export const channelPage = (id, tab, q, continuation) =>
+  api(continuation ? `/api/channel?continuation=${encodeURIComponent(continuation)}` : `/api/channel?id=${encodeURIComponent(id)}&tab=${tab}${q ? `&q=${encodeURIComponent(q)}` : ''}`);
 export const sendFeedback = (token) => api('/api/feedback', { method: 'POST', body: { token } });
 export const sponsorSegments = (videoId) => api(`/api/sponsorblock?id=${encodeURIComponent(videoId)}`);
