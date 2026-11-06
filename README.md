@@ -167,6 +167,27 @@ with its stack).
 
 Local run: `npm install && npm start` → http://localhost:8080.
 
+### Required Cloud Run settings (the server holds the TV connection)
+
+The connection to the Xbox and the whole ad engine (auto-skip, dodge, mute,
+SponsorBlock) run **on the server**, not the phone, because Android freezes a
+web app's timers when the screen is off or another app is in front. The
+phone just attaches to the server's TV session to show state and send
+buttons. That needs:
+
+* **Maximum number of instances = 1.** The TV session lives in that
+  instance's memory; a second instance would not know about it.
+* **Request timeout = 600 s or more.** While you watch, the server keeps one
+  request open to itself (`/api/remote/hold`, renewed every 9 minutes) so
+  Cloud Run keeps its CPU running with ordinary request-based billing.
+* **Minimum instances = 0 is fine.** The session closes itself 15 minutes
+  after the TV goes idle and no phone has been in contact; then the keep-
+  alive stops and Cloud Run scales to zero.
+
+Cloud Run → Logs shows every `[session …]` line (ad start, dodge armed,
+dodge, forced seek, keep-alive), and the same lines appear in the phone's
+debug log as `server` entries.
+
 ### Where the cookies live: on the phone
 
 The phone keeps the cookies (browser storage) and sends them with each
@@ -187,7 +208,7 @@ once more before giving up on a 401). The phone stores every
 refreshed copy, so nothing is lost when the instance shuts down. `GET /api/cookies/status` shows the jar's state; Cloud Run logs show
 every `[cookies]` update and rotation.
 
-### Keep it fast: minimum instances = 1
+### Speed
 
 Every button press is phone → Cloud Run → YouTube → Xbox. YouTube's part is
 about 150 ms. A cold Cloud Run instance adds seconds, so set **Minimum number
