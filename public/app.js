@@ -209,7 +209,30 @@ function card(v, { compact = false } = {}) {
     )
   );
   cardVideo.set(node, v);
+  markCard(node, v);
   return node;
+}
+
+/** Badge on a card when its video is already in the queue (or playing now). */
+function markCard(node, v) {
+  const idx = Q.items.findIndex((it) => it.videoId === v.videoId);
+  const playing = idx !== -1 && idx === Q.currentIndex && remote.player.videoId === v.videoId;
+  const state = idx === -1 ? '' : playing ? 'playing' : 'queued';
+  const key = state ? `${state}:${idx}` : '';
+  if (node.dataset.q === key) return;
+  node.dataset.q = key;
+  node.classList.toggle('inqueue', Boolean(state));
+  const thumb = node.querySelector('.thumb');
+  const old = thumb.querySelector('.qbadge');
+  if (old) old.remove();
+  if (state) thumb.append(el('span', { class: `qbadge ${state}` }, state === 'playing' ? '▶ Playing' : `In queue · #${idx + 1}`));
+}
+/** Re-marks every card on screen; cheap (only touches cards whose state changed). */
+function markAllCards() {
+  for (const node of document.querySelectorAll('.card')) {
+    const v = cardVideo.get(node);
+    if (v) markCard(node, v);
+  }
 }
 const cardVideo = new WeakMap();
 
@@ -453,6 +476,7 @@ function insertAfterCurrent(item) {
 }
 function saveQueue() {
   store.saveQueue();
+  markAllCards();
   renderQueue();
   renderMini();
   if (ui.npOpen) renderNowPlaying();
@@ -1867,6 +1891,7 @@ remote.addEventListener('player', () => {
   if (pl.videoId !== lastVideoId) {
     debug.log('app', `TV video changed: ${lastVideoId} → ${pl.videoId}`, { state: pl.state, currentIndex: pl.currentIndex, listId: pl.listId });
     lastVideoId = pl.videoId;
+    markAllCards();
     ui.comments = null;
     ui.descOpen = false;
     resetAdRun(pl.videoId);
