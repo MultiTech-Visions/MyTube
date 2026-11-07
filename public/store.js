@@ -101,6 +101,12 @@ export const store = {
   },
 };
 
+// Left behind by the removed "Send to TV screen" feature.
+if ('castCode' in store.settings) {
+  delete store.settings.castCode;
+  store.saveSettings();
+}
+
 if (store.settings.ads === null || store.settings.ads === undefined) {
   store.settings.ads = { ...AD_DEFAULTS };
   store.saveSettings();

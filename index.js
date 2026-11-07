@@ -36,7 +36,6 @@ const path = require('path');
 const innertube = require('./lib/innertube');
 const sponsorblock = require('./lib/sponsorblock');
 const tv = require('./lib/session');
-const cast = require('./lib/cast');
 const lounge = require('./lib/lounge');
 const { HttpError, jsonBody, requireString, sendJson, sendError } = require('./lib/util');
 
@@ -57,7 +56,7 @@ const MIME = {
 // ---------------------------------------------------------------------------
 
 function serveStatic(req, res) {
-  const urlPath = decodeURIComponent(req.path === '/' ? '/index.html' : req.path === '/tv' ? '/tv.html' : req.path);
+  const urlPath = decodeURIComponent(req.path === '/' ? '/index.html' : req.path);
   const target = path.normalize(path.join(PUBLIC_DIR, urlPath));
   if (!target.startsWith(PUBLIC_DIR + path.sep)) throw new HttpError(404, 'NOT_FOUND', 'Not found');
   let stat;
@@ -175,23 +174,6 @@ async function api(req, res) {
     case 'POST /api/playlist/create': {
       const body = jsonBody(req);
       return sendJson(res, 200, await innertube.createPlaylist(cookiesFor(req), requireString(body, 'title', 'body'), typeof body.videoId === 'string' ? body.videoId : null));
-    }
-    // --- "Send to TV screen" (the /tv page in Edge on the Xbox) ---
-    case 'POST /api/cast/register': {
-      const body = jsonBody(req);
-      return sendJson(res, 200, cast.register(typeof body.previous === 'string' ? body.previous : null));
-    }
-    case 'GET /api/cast/wait': {
-      const cursor = Number(req.query.cursor);
-      if (!Number.isInteger(cursor)) throw new HttpError(400, 'BAD_REQUEST', 'cursor must be an integer');
-      return sendJson(res, 200, { items: await cast.wait(requireString(req.query, 'code', 'query'), cursor, 25000) });
-    }
-    case 'POST /api/cast/send': {
-      const body = jsonBody(req);
-      const code = requireString(body, 'code', 'body');
-      if (body.action) return sendJson(res, 200, cast.send(code, { kind: 'control', action: requireString(body, 'action', 'body'), value: Number(body.value) || 0 }));
-      const item = cast.parseLink(requireString(body, 'link', 'body'));
-      return sendJson(res, 200, { ...cast.send(code, item), item });
     }
     case 'GET /api/ping': {
       return sendJson(res, 200, { ok: true, instance: tv.INSTANCE.id, upSeconds: Math.round((Date.now() - tv.INSTANCE.startedAt) / 1000), sessions: tv.sessions.size });
