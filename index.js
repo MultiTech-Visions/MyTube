@@ -126,6 +126,16 @@ function sessionFrom(src, { needChannel }) {
   return session;
 }
 
+/** Ad settings from the phone (attach and settings routes). */
+function adsFrom(body) {
+  const ads = body.ads;
+  if (!ads || typeof ads !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.ads is required');
+  if (typeof ads.dodgeAfter !== 'number' || !Number.isFinite(ads.dodgeAfter) || ads.dodgeAfter < 0) {
+    throw new HttpError(400, 'BAD_REQUEST', `ads.dodgeAfter must be a number of seconds >= 0 (got ${JSON.stringify(ads.dodgeAfter)})`);
+  }
+  return ads;
+}
+
 // ---------------------------------------------------------------------------
 // API routes
 // ---------------------------------------------------------------------------
@@ -207,9 +217,9 @@ async function api(req, res) {
       if (!body.screen || typeof body.screen !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.screen is required');
       requireString(body.screen, 'screenId', 'screen');
       requireString(body.screen, 'loungeToken', 'screen');
-      if (!body.ads || typeof body.ads !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.ads is required');
+      const ads = adsFrom(body);
       const selfUrl = `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
-      return sendJson(res, 200, await tv.attach({ screen: body.screen, deviceId: requireString(body, 'deviceId', 'body'), name: requireString(body, 'name', 'body'), ads: body.ads, selfUrl, queue: body.queue }));
+      return sendJson(res, 200, await tv.attach({ screen: body.screen, deviceId: requireString(body, 'deviceId', 'body'), name: requireString(body, 'name', 'body'), ads, selfUrl, queue: body.queue }));
     }
     case 'GET /api/remote/events': {
       const s = tv.get(requireString(req.query, 'screenId', 'query'));
@@ -243,8 +253,7 @@ async function api(req, res) {
     case 'POST /api/remote/settings': {
       const body = jsonBody(req);
       const s = tv.get(requireString(body, 'screenId', 'body'));
-      if (!body.ads || typeof body.ads !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.ads is required');
-      s.ads = { ...body.ads };
+      s.ads = { ...adsFrom(body) };
       s.log('ad settings updated', s.ads);
       return sendJson(res, 200, { ok: true });
     }

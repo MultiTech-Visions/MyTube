@@ -1037,13 +1037,12 @@ $('#np-done').addEventListener('click', guard(shutDown));
 // ---------------------------------------------------------------------------
 const adRun = { videoId: null, dodges: 0, muted: false, busy: false, autoSkipped: 0, waitTimer: null };
 const ADS = () => store.settings.ads;
-const DODGE_MIN_AD_SECONDS = 5; // reloads sent earlier than this do not take (iSponsorBlockTV #489)
 
 function adStatusText() {
   const s = ADS();
   const parts = [s.autoSkip ? 'auto-skip on' : 'auto-skip off'];
   if (s.dodge && !remote.ad.skipEnabled) {
-    const left = Math.max(0, DODGE_MIN_AD_SECONDS - remote.adElapsed());
+    const left = Math.max(0, s.dodgeAfter - remote.adElapsed());
     parts.push(left > 0 ? `server dodges in ${Math.ceil(left)} s` : 'server dodging');
   }
   if (s.muteAds) parts.push('muted by server');
@@ -2159,13 +2158,15 @@ function renderTvView() {
       el('div', { class: 'setting-text' }, label, el('small', {}, hint)),
       el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: ads[key], onchange: (e) => { ads[key] = e.target.checked; store.saveSettings(); pushAdSettings(); debug.log('app', `setting ads.${key} = ${ads[key]}`); if (key === 'sponsorBlock' && ads[key] && remote.player.videoId) loadSponsorSegments(remote.player.videoId).catch(showError); } }), el('span'))
     );
+  const dodgeAfter = el('select', { onchange: (e) => { ads.dodgeAfter = Number(e.target.value); store.saveSettings(); pushAdSettings(); debug.log('app', `setting ads.dodgeAfter = ${ads.dodgeAfter}`); } }, ...[0, 1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeAfter === n }, n === 0 ? 'Right away' : `${n} s`)));
   const dodgeMax = el('select', { onchange: (e) => { ads.dodgeMax = Number(e.target.value); store.saveSettings(); pushAdSettings(); } }, ...[1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeMax === n }, String(n))));
   const cats = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic'];
   panels.push(
     el('div', { class: 'panel' },
       el('h3', {}, 'Ads'),
       row('autoSkip', 'Skip ads automatically', 'Sends Skip the instant the TV reports the skip button is enabled.'),
-      row('dodge', 'Dodge unskippable ads by reloading', 'Your trick: once an ad has played 5 s (earlier reloads do not take), reload the video at the saved position (+2 s past a mid-roll cue) and force a seek there. Skippable ads are skipped instead.'),
+      row('dodge', 'Dodge unskippable ads by reloading', 'Your trick: reload the video at the saved position (+2 s past a mid-roll cue) and force a seek there. An ad the TV already reports as skippable is skipped instead.'),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Dodge after', el('small', {}, 'How long the ad plays before the reload. Raise it if the ad comes straight back after a reload.')), dodgeAfter),
       row('dodgeExit', 'Leave the player first', 'Send stopVideo (like pressing B) before the reload. Turn off to reload in place.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then the ad just plays (or gets skipped).')), dodgeMax),
       row('muteAds', 'Mute during ads', 'Mutes the TV on ad start and unmutes when the ad ends.'),

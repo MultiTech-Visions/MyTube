@@ -33,7 +33,8 @@ if (deviceId === null) {
 /** Ad strategies. Settings saved before this existed get the defaults once, explicitly. */
 export const AD_DEFAULTS = {
   autoSkip: true, // send skipAd the moment the TV says the skip button is enabled
-  dodge: false, // once an ad has played 5 s: reload the video at the saved position, then force a seek
+  dodge: false, // once an ad has played dodgeAfter s: reload the video at the saved position, then force a seek
+  dodgeAfter: 0, // seconds of ad before the auto-dodge reloads (0 = right away)
   dodgeExit: true, // leave the player (stopVideo) before reloading, like pressing B on the Xbox
   dodgeMax: 2, // give up after this many reloads for one video
   dodgeOffset: 2, // seconds to land past the position where the ad hit (clears mid-roll cue points)
