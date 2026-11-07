@@ -206,8 +206,25 @@ buttons. That needs:
   contact. Play now reconnects automatically next time.
 
 Cloud Run → Logs shows every `[session …]` line (ad start, dodge armed,
-dodge, forced seek, keep-alive), and the same lines appear in the phone's
+dodge, return seek, keep-alive), and the same lines appear in the phone's
 debug log as `server` entries.
+
+How to tell the settings are right, from the phone's debug log:
+
+* `attached to the server's TV session on server instance abc123 (up N s)`:
+  the instance id should stay the same for a whole evening. A line
+  `server instance changed … the TV session was lost with it` means Cloud
+  Run restarted the service or ran more than one instance (max instances
+  must be 1).
+* `keep-alive cut off after ~300 s`: the request timeout is still the
+  default; set it to 600. (The keep-alive is 240 s long so it works either
+  way, but a cut keep-alive is a sign the setting was missed.)
+* `https://<your-service>/api/ping` shows the instance id, how long it has
+  been up, and how many TV sessions it holds.
+
+If Home answers "Google is rate-limiting this account/server (HTTP 403
+Sorry…)", wait 15–30 minutes; the server also pauses its own cookie refresh
+for 30 minutes after YouTube answers 429 to it.
 
 ### Where the cookies live: on the phone
 
