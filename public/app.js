@@ -720,14 +720,19 @@ function move(index, delta) {
   saveQueue();
 }
 
-function clearQueue() {
-  if (!confirm('Clear the whole queue? The TV keeps playing the current video.')) return;
-  debug.log('app', 'queue cleared by user');
+/** Empties the local queue. The TV keeps playing whatever is on it now. */
+function doClearQueue() {
   Q.items = [];
   Q.currentIndex = -1;
   ui.owned = false;
   ui.stale = false;
   saveQueue();
+}
+function clearQueue() {
+  if (Q.items.length === 0) return;
+  if (!confirm('Clear the whole queue? The TV keeps playing the current video.')) return;
+  debug.log('app', 'queue cleared by user');
+  doClearQueue();
 }
 
 /** The TV told us what it is playing: line our index up with it. */
@@ -1018,11 +1023,12 @@ $('#np-dodge').addEventListener('click', guard(() => dodgeAd()));
  */
 async function shutDown() {
   ui.shutDown = true;
-  debug.log('app', 'shut down pressed');
+  debug.log('app', `shut down pressed (clearing ${Q.items.length} queued videos)`);
+  doClearQueue();
   closeNowPlaying();
   media.stop();
   await remote.disconnect();
-  toast('Shut down. The server will sleep now.');
+  toast('Shut down. Queue cleared, the server will sleep now.');
 }
 $('#np-done').addEventListener('click', guard(shutDown));
 
