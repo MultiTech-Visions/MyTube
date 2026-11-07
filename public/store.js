@@ -89,6 +89,12 @@ export const store = {
     if (this.hidden.length > 2000) this.hidden.splice(0, this.hidden.length - 2000);
     save(KEYS.hidden, this.hidden);
   },
+  unhide(videoId) {
+    const i = this.hidden.indexOf(videoId);
+    if (i === -1) return;
+    this.hidden.splice(i, 1);
+    save(KEYS.hidden, this.hidden);
+  },
 
   clearAll() {
     for (const k of Object.values(KEYS)) localStorage.removeItem(k);

@@ -33,9 +33,10 @@ export class Remote extends EventTarget {
    * @param {() => object|null} o.getScreen { screenId, loungeToken, name, expiration } or null
    * @param {(screen: object) => void} o.setScreen persist a refreshed token
    */
-  constructor({ deviceId, getDeviceName, getScreen, setScreen, getAds }) {
+  constructor({ deviceId, getDeviceName, getScreen, setScreen, getAds, getQueue }) {
     super();
     this.getAds = getAds;
+    this.getQueue = getQueue || (() => []);
     this.deviceId = deviceId;
     this.getDeviceName = getDeviceName;
     this.getScreen = getScreen;
@@ -145,11 +146,14 @@ export class Remote extends EventTarget {
     const screen = this.getScreen();
     const result = await api('/api/remote/attach', {
       method: 'POST',
-      body: { screen: { screenId: screen.screenId, loungeToken: screen.loungeToken, name: screen.name }, deviceId: this.deviceId, name: this.getDeviceName(), ads: this.getAds() },
+      body: { screen: { screenId: screen.screenId, loungeToken: screen.loungeToken, name: screen.name }, deviceId: this.deviceId, name: this.getDeviceName(), ads: this.getAds(), queue: this.getQueue() },
     });
     if (gen !== this._generation) return; // superseded by a newer connect/disconnect
     if (result.screen && result.screen.loungeToken !== screen.loungeToken) this.setScreen({ ...screen, ...result.screen });
-    log('app', `attached to the server's TV session (status ${result.status}, ${result.events.length} state events)`);
+    const inst = result.instance ? ` on server instance ${result.instance.id} (up ${result.instance.upSeconds} s)` : '';
+    if (this._instance && result.instance && this._instance !== result.instance.id) log('error', `server instance changed ${this._instance} → ${result.instance.id}: the TV session was lost with it (Cloud Run restarted or more than one instance)`);
+    this._instance = result.instance ? result.instance.id : this._instance;
+    log('app', `attached to the server's TV session${inst} (status ${result.status}, ${result.events.length} state events)`);
     this.session = { screenId: screen.screenId, cursor: result.cursor };
     this.player = this._emptyPlayer();
     this.ad = this._emptyAd();
@@ -203,7 +207,7 @@ export class Remote extends EventTarget {
   /** Manual dodge (the overlay button). The server does the actual reload. */
   async dodge() {
     if (!this.session) throw new Error('Not connected to the TV');
-    return api('/api/remote/dodge', { method: 'POST', body: { screenId: this.session.screenId } });
+    return api('/api/remote/dodge', { method: 'POST', body: { screenId: this.session.screenId, queue: this.getQueue() } });
   }
 
   // ---------------------------------------------------------------------------
@@ -499,10 +503,12 @@ export class Remote extends EventTarget {
         return;
       }
       case 'playlistModified': {
+        // The Xbox sends only listId / firstVideoId / videoId here; the list itself comes with
+        // nowPlaying.mdxExpandedReceiverVideoIdList. Only replace what this event carries.
         this.tvQueue = {
-          listId: typeof p.listId === 'string' ? p.listId : null,
-          videoIds: typeof p.videoIds === 'string' ? p.videoIds.split(',').filter(Boolean) : [],
-          currentIndex: p.currentIndex === undefined ? -1 : num(p.currentIndex),
+          listId: typeof p.listId === 'string' ? p.listId : this.tvQueue.listId,
+          videoIds: typeof p.videoIds === 'string' ? p.videoIds.split(',').filter(Boolean) : this.tvQueue.videoIds,
+          currentIndex: p.currentIndex === undefined ? this.tvQueue.currentIndex : num(p.currentIndex),
         };
         if (typeof p.listId === 'string') pl.listId = p.listId;
         this._emit('tvqueue');
