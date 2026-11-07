@@ -239,6 +239,12 @@ handed that cookie, so remove the variable once the phone has adopted it.
 
 ### Cookies stay alive by themselves
 
+The server records when it last refreshed the session in a marker it hands
+back to the phone, so a Cloud Run cold start does not refresh again on its
+first request. Needless refreshes were what tripped Google's rate limiter;
+with this the session should last like a normal browser login and a cookie
+re-export becomes rare.
+
 YouTube rotates part of the login every few minutes. The server keeps a
 browser-like cookie jar: it saves every cookie YouTube sends back and calls
 the same rotation endpoint an open YouTube tab does (every 9 minutes, and
