@@ -74,9 +74,11 @@ Research summary (Nov 2026; sources in the Prior art section):
   the button, so you never hunt for it.
 * **Unskippable ads can be dodged by reloading.** An experimental
   iSponsorBlockTV branch (`close-ads-5s`, Sept–Oct 2026) implements the
-  same trick you found by hand: once the ad has played **5 seconds** (any
-  earlier and the reload is ignored), load the video again at the saved
-  position. Two details matter: YouTube ignores the position in the reload
+  same trick you found by hand: once the ad has played 5 seconds (their
+  testers saw earlier reloads ignored), load the video again at the saved
+  position. On your Xbox the hand-done combo works about 1.5 s into the
+  ad, so MyTube's wait is a setting, **Dodge after** (TV tab → Ads),
+  default **right away**; raise it if the ad comes straight back. Two details matter: YouTube ignores the position in the reload
   and restores its own stale saved time (10–20 s old), so a `seekTo` must
   follow once the video reports playing; and testers see the occasional
   second ad after a reload, so there is a per-video cap. MyTube's **Dodge
