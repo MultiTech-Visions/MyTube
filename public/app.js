@@ -358,16 +358,83 @@ function openSheet(v) {
 /** Hides the video locally at once (persisted), then tells YouTube when a token is available. */
 async function removeRecommendation(v, option) {
   closeSheet();
+  const listId = { home: 'feed-list', subs: 'subs-list', search: 'search-list' }[ui.view] || 'feed-list';
   store.hide(v.videoId);
-  renderFeedList();
+  rerenderList(listId);
   debug.log('app', `removed recommendation ${v.videoId}${option ? ` via "${option.label}"` : ' (local hide)'}`);
-  if (!option) {
-    toast('Hidden from your feed');
-    return;
-  }
-  await apiSendFeedback(option.token);
-  toast(`${option.label}: YouTube will show fewer like this`);
+  offerUndo({
+    text: `${option ? option.label : 'Hidden'}: ${v.title}`,
+    revert: () => {
+      store.unhide(v.videoId);
+      rerenderList(listId);
+      debug.log('app', `undo: restored ${v.videoId}`);
+    },
+    commit: option ? (opts) => apiSendFeedback(option.token, opts) : null,
+    commitLabel: option ? option.label : null,
+  });
 }
+
+/** Re-draws the list a card came from (after a hide or an undo). */
+function rerenderList(listId) {
+  if (listId === 'feed-list') renderFeedList();
+  else if (listId === 'subs-list') renderSubs();
+  else if (listId === 'search-list') renderList($('#search-list'), ui.search.items.filter((v) => !store.hidden.includes(v.videoId)));
+  else if (listId === 'np-related') renderRelated();
+  else if (listId === 'chan-list') renderChannelList();
+  else if (listId === 'library-list') renderLibrary();
+}
+
+// ---------------------------------------------------------------------------
+// Undo banner: the removal shows at once, the real action is held for 10 s
+// ---------------------------------------------------------------------------
+const UNDO_MS = 10000;
+let pendingUndo = null; // { revert, commit, commitLabel, timer }
+
+/**
+ * Shows "Removed … · Undo" for 10 s. Undo runs `revert` (local only, always
+ * works). When the time is up, or another removal replaces this one, or the
+ * app goes to the background, `commit` sends the real action to YouTube.
+ */
+function offerUndo({ text, revert, commit, commitLabel }) {
+  if (pendingUndo) commitPending('replaced');
+  pendingUndo = { revert, commit, commitLabel, timer: setTimeout(() => commitPending('timeout'), UNDO_MS) };
+  const box = $('#undo');
+  $('#undo-text').textContent = text;
+  const fill = $('#undo-fill');
+  fill.classList.remove('run');
+  box.hidden = false;
+  requestAnimationFrame(() => requestAnimationFrame(() => fill.classList.add('run')));
+}
+function hideUndoBanner() {
+  $('#undo').hidden = true;
+}
+/** Sends the held action (if any). `keepalive` is used when the page may be going away. */
+function commitPending(reason, { keepalive = false } = {}) {
+  const p = pendingUndo;
+  if (!p) return;
+  pendingUndo = null;
+  clearTimeout(p.timer);
+  hideUndoBanner();
+  if (!p.commit) return;
+  debug.log('app', `undo window over (${reason}); sending ${p.commitLabel} to YouTube`);
+  p.commit({ keepalive }).catch(showError);
+}
+$('#undo-btn').addEventListener('click', () => {
+  const p = pendingUndo;
+  if (!p) return;
+  pendingUndo = null;
+  clearTimeout(p.timer);
+  hideUndoBanner();
+  try {
+    p.revert();
+    toast('Restored');
+  } catch (e) {
+    showError(e);
+  }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') commitPending('app hidden', { keepalive: true });
+});
 function visibleFeed() {
   const hidden = new Set(store.hidden);
   return ui.feed.items.filter((v) => !hidden.has(v.videoId));
@@ -1505,22 +1572,42 @@ const swipe = { justSwiped: false };
 
 /** What a left swipe means in each list; null = no left action there. */
 function leftAction(listId) {
-  if (listId === 'feed-list' || listId === 'subs-list' || listId === 'search-list' || listId === 'np-related') return { label: 'Remove', run: dismissVideo };
+  if (listId === 'feed-list' || listId === 'subs-list' || listId === 'search-list' || listId === 'np-related' || listId === 'chan-list') return { label: 'Remove', run: dismissVideo };
   if (listId === 'library-list' && !L.playlist && L.tab === 'WL') return { label: 'Remove from Watch later', run: removeFromWatchLater };
   return null;
 }
 
 /** Left swipe on a recommendation: hide it for good, and tell YouTube "Not interested" when it offered that. */
-async function dismissVideo(v) {
+async function dismissVideo(v, listId) {
   store.hide(v.videoId);
   const notInterested = (v.feedback || []).find((f) => /not interested/i.test(f.label));
-  debug.log('app', `swiped away ${v.videoId}${notInterested ? ' (+ Not interested)' : ''}`);
-  if (notInterested) await apiSendFeedback(notInterested.token);
+  debug.log('app', `swiped away ${v.videoId}${notInterested ? ' (+ Not interested, held 10 s)' : ''}`);
+  offerUndo({
+    text: `Removed: ${v.title}`,
+    revert: () => {
+      store.unhide(v.videoId);
+      rerenderList(listId);
+      debug.log('app', `undo: restored ${v.videoId}`);
+    },
+    commit: notInterested ? (opts) => apiSendFeedback(notInterested.token, opts) : null,
+    commitLabel: 'Not interested',
+  });
 }
-async function removeFromWatchLater(v) {
+async function removeFromWatchLater(v, listId) {
+  const index = L.items.findIndex((x) => x.videoId === v.videoId);
+  const item = L.items[index];
   L.items = L.items.filter((x) => x.videoId !== v.videoId);
-  await apiEditPlaylist('WL', v.videoId, 'remove');
-  debug.log('app', `swiped ${v.videoId} out of Watch later`);
+  debug.log('app', `swiped ${v.videoId} out of Watch later (held 10 s)`);
+  offerUndo({
+    text: `Removed from Watch later: ${v.title}`,
+    revert: () => {
+      L.items.splice(Math.min(index, L.items.length), 0, item);
+      rerenderList(listId);
+      debug.log('app', `undo: ${v.videoId} back in Watch later`);
+    },
+    commit: (opts) => apiEditPlaylist('WL', v.videoId, 'remove', opts),
+    commitLabel: 'remove from Watch later',
+  });
 }
 
 function attachSwipe(container) {
@@ -1598,7 +1685,7 @@ function attachSwipe(container) {
       requestAnimationFrame(() => { c.style.height = '0px'; c.style.paddingBottom = '0px'; c.style.overflow = 'hidden'; });
       setTimeout(() => c.remove(), 220);
     }, 180);
-    left.run(v).then(() => toast(`${left.label}: ${v.title}`)).catch(showError);
+    left.run(v, container.id).catch(showError);
   };
   container.addEventListener('touchend', end);
   container.addEventListener('touchcancel', () => {

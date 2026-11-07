@@ -21,12 +21,13 @@ function cookieHeader() {
   return cookies ? { 'X-YT-Cookies': encodeURIComponent(cookies) } : {};
 }
 
-export async function api(path, { method = 'GET', body, signal } = {}) {
+export async function api(path, { method = 'GET', body, signal, keepalive = false } = {}) {
   const headers = { ...cookieHeader() };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   let res;
   try {
-    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+    // keepalive lets a request finish even if the page is being closed (used for held actions)
+    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal, keepalive });
   } catch (e) {
     log('error', `${method} ${path.split('?')[0]} network failure: ${e.message}`);
     throw e;
@@ -68,12 +69,12 @@ export const playlist = (id, continuation) =>
   api(continuation ? `/api/playlist?continuation=${encodeURIComponent(continuation)}` : `/api/playlist?id=${encodeURIComponent(id)}`);
 export const rate = (videoId, rating) => api('/api/rate', { method: 'POST', body: { videoId, rating } });
 export const saveOptions = (videoId) => api(`/api/save-options?videoId=${encodeURIComponent(videoId)}`);
-export const editPlaylist = (playlistId, videoId, action) => api('/api/playlist/edit', { method: 'POST', body: { playlistId, videoId, action } });
+export const editPlaylist = (playlistId, videoId, action, opts = {}) => api('/api/playlist/edit', { method: 'POST', body: { playlistId, videoId, action }, ...opts });
 export const createPlaylist = (title, videoId) => api('/api/playlist/create', { method: 'POST', body: { title, videoId } });
 export const subscriptions = (continuation) => api(`/api/subscriptions${continuation ? `?continuation=${encodeURIComponent(continuation)}` : ''}`);
 export const channelVideos = (id, continuation) =>
   api(continuation ? `/api/channel?continuation=${encodeURIComponent(continuation)}` : `/api/channel?id=${encodeURIComponent(id)}`);
 export const channelPage = (id, tab, q, continuation) =>
   api(continuation ? `/api/channel?continuation=${encodeURIComponent(continuation)}` : `/api/channel?id=${encodeURIComponent(id)}&tab=${tab}${q ? `&q=${encodeURIComponent(q)}` : ''}`);
-export const sendFeedback = (token) => api('/api/feedback', { method: 'POST', body: { token } });
+export const sendFeedback = (token, opts = {}) => api('/api/feedback', { method: 'POST', body: { token }, ...opts });
 export const sponsorSegments = (videoId) => api(`/api/sponsorblock?id=${encodeURIComponent(videoId)}`);
