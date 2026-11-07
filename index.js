@@ -194,7 +194,7 @@ async function api(req, res) {
       return sendJson(res, 200, { ...cast.send(code, item), item });
     }
     case 'GET /api/ping': {
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true, instance: tv.INSTANCE.id, upSeconds: Math.round((Date.now() - tv.INSTANCE.startedAt) / 1000), sessions: tv.sessions.size });
     }
     case 'GET /api/cookies/status': {
       return sendJson(res, 200, { source: req.get('X-YT-Cookies') ? 'phone' : process.env.YT_COOKIES ? 'server' : 'none', jar: innertube.jarStatus(cookiesFor(req)) });
@@ -227,7 +227,7 @@ async function api(req, res) {
       requireString(body.screen, 'loungeToken', 'screen');
       if (!body.ads || typeof body.ads !== 'object') throw new HttpError(400, 'BAD_REQUEST', 'body.ads is required');
       const selfUrl = `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
-      return sendJson(res, 200, await tv.attach({ screen: body.screen, deviceId: requireString(body, 'deviceId', 'body'), name: requireString(body, 'name', 'body'), ads: body.ads, selfUrl }));
+      return sendJson(res, 200, await tv.attach({ screen: body.screen, deviceId: requireString(body, 'deviceId', 'body'), name: requireString(body, 'name', 'body'), ads: body.ads, selfUrl, queue: body.queue }));
     }
     case 'GET /api/remote/events': {
       const s = tv.get(requireString(req.query, 'screenId', 'query'));
@@ -267,7 +267,9 @@ async function api(req, res) {
       return sendJson(res, 200, { ok: true });
     }
     case 'POST /api/remote/dodge': {
-      const s = tv.get(requireString(jsonBody(req), 'screenId', 'body'));
+      const body = jsonBody(req);
+      const s = tv.get(requireString(body, 'screenId', 'body'));
+      if (Array.isArray(body.queue) && body.queue.every((id) => typeof id === 'string')) s.phoneQueue = body.queue;
       return sendJson(res, 200, await s.dodge('button'));
     }
     case 'POST /api/remote/close': {

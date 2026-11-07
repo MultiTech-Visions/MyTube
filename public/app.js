@@ -91,6 +91,7 @@ const remote = new Remote({
   getDeviceName: () => store.settings.deviceName,
   getScreen: () => store.settings.screen,
   getAds: () => store.settings.ads,
+  getQueue: () => store.queue.items.map((it) => it.videoId),
   setScreen: (screen) => {
     store.settings.screen = screen;
     store.saveSettings();
