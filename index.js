@@ -5,6 +5,7 @@
  *
  *   GET  /                      the phone web app (static files in /public)
  *   GET  /api/feed              Home recommendations        ?continuation=
+ *   POST /api/mix               MyTube's own picks (no account) { videos:[ids], channels:[ids] }
  *   GET  /api/search            Search                      ?q=  ?continuation=
  *   GET  /api/watch             Video info+chapters+related ?id= ?continuation=
  *   GET  /api/comments          Comments / replies          ?continuation=
@@ -35,6 +36,7 @@ const crypto = require('crypto');
 const path = require('path');
 const innertube = require('./lib/innertube');
 const sponsorblock = require('./lib/sponsorblock');
+const mix = require('./lib/mix');
 const tv = require('./lib/session');
 const lounge = require('./lib/lounge');
 const { HttpError, jsonBody, requireString, sendJson, sendError } = require('./lib/util');
@@ -201,6 +203,9 @@ async function api(req, res) {
       const tab = typeof req.query.tab === 'string' ? req.query.tab : 'videos';
       const q = typeof req.query.q === 'string' ? req.query.q : null;
       return sendJson(res, 200, await innertube.channel(cookiesFor(req), id, tab, q, cont));
+    }
+    case 'POST /api/mix': {
+      return sendJson(res, 200, await mix.build(jsonBody(req)));
     }
     case 'POST /api/feedback': {
       return sendJson(res, 200, await innertube.feedback(cookiesFor(req), requireString(jsonBody(req), 'token', 'body')));
