@@ -16,6 +16,7 @@
 import { api, ApiError } from './api.js';
 import { log, eventData } from './debug.js';
 
+const DPAD_KEYS = new Set(['UP', 'DOWN', 'LEFT', 'RIGHT', 'ENTER', 'BACK']);
 const QUEUE_COMMANDS = new Set(['addVideo', 'insertVideo', 'removeVideo', 'setPlaylist', 'stopVideo']);
 
 export const PLAYER_STATE = { STOPPED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5, AD: 1081, AD_SKIPPED: 1082 };
@@ -427,6 +428,14 @@ export class Remote extends EventTarget {
       this._seekNext = null;
       if (Math.floor(next) !== Math.floor(target)) await this._fireSeek(next);
     }
+  }
+  /**
+   * A controller button press on the TV: UP, DOWN, LEFT, RIGHT, ENTER (A) or BACK (B).
+   * The same command the YouTube phone app's on-screen remote sends.
+   */
+  dpad(key) {
+    if (!DPAD_KEYS.has(key)) throw new Error(`Unknown remote key ${key}`);
+    return this.send('dpadCommand', { key });
   }
   skipAd() {
     return this.send('skipAd');

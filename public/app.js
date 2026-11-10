@@ -1161,6 +1161,13 @@ async function shutDown() {
   toast('Shut down. Queue cleared, the server will sleep now.');
 }
 $('#np-done').addEventListener('click', guard(shutDown));
+// Controller buttons on the TV (B, arrows, A), for pop-ups the playback commands cannot close.
+for (const b of document.querySelectorAll('#np-pad [data-key]')) b.addEventListener('click', guard(() => remote.dpad(b.dataset.key)));
+$('#np-closepop').addEventListener('click', guard(async () => {
+  await remote.dpad('DOWN');
+  await new Promise((r) => setTimeout(r, 400)); // let the TV move the highlight to the X first
+  await remote.dpad('ENTER');
+}));
 
 // ---------------------------------------------------------------------------
 // Ad strategies: auto-skip, dodge (exit + reload), mute, SponsorBlock

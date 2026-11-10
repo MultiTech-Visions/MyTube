@@ -367,3 +367,10 @@ body.has-mini .undo { bottom: calc(var(--nav-h) + var(--mini-h) + 12px + var(--s
 .tune-name { flex: 1; min-width: 0; text-align: left; color: var(--text); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tune-name small { display: block; color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .chip.active.danger { background: #ff8a80; color: #000; }
+
+/* Controller pad on the now-playing sheet */
+.np-pad { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 8px; }
+.padbtn { flex: 1; min-width: 40px; height: 40px; border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 16px; }
+.padbtn.wide { flex: 1.6; font-size: 14px; font-weight: 500; }
+.padbtn.full { flex: 1 0 100%; font-size: 13px; }
+.padbtn:active { background: #fff; color: #000; }
