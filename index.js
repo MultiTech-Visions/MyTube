@@ -5,7 +5,7 @@
  *
  *   GET  /                      the phone web app (static files in /public)
  *   GET  /api/feed              Home recommendations        ?continuation=
- *   POST /api/mix               MyTube's own picks (no account) { videos:[ids], channels:[ids] }
+ *   POST /api/mix               MyTube's own picks (no account) { videos:[ids], channels:[ids], keywords:[text] }
  *   GET  /api/search            Search                      ?q=  ?continuation=
  *   GET  /api/watch             Video info+chapters+related ?id= ?continuation=
  *   GET  /api/comments          Comments / replies          ?continuation=

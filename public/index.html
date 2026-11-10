@@ -87,6 +87,7 @@
       <div class="loading" id="library-loading" hidden><span class="spinner"></span></div>
     </section>
 
+    <section class="view" id="view-tune" hidden></section>
     <section class="view" id="view-tv" hidden></section>
   </main>
 
@@ -107,6 +108,7 @@
     <button class="navbtn" data-view="search"><span class="ico" data-icon="search"></span><span>Search</span></button>
     <button class="navbtn" data-view="queue"><span class="ico" data-icon="queue"></span><span>Queue</span><span class="badge" id="queue-badge" hidden></span></button>
     <button class="navbtn" data-view="library"><span class="ico" data-icon="library"></span><span>Library</span></button>
+    <button class="navbtn" data-view="tune"><span class="ico" data-icon="tune"></span><span>Tune</span></button>
     <button class="navbtn" data-view="tv"><span class="ico" data-icon="tv"></span><span>TV</span></button>
   </nav>
 
@@ -158,6 +160,15 @@
       <label class="toggle"><input type="checkbox" id="np-autoplay"><span></span>Autoplay</label>
       <button class="btn ghost small" id="np-start" hidden>Start queue on TV</button>
       <button class="btn ghost small danger" id="np-done">Done — shut down</button>
+    </div>
+    <div class="np-pad" id="np-pad">
+      <button class="padbtn wide" data-key="BACK" aria-label="Back, like B on the controller">B Back</button>
+      <button class="padbtn" data-key="LEFT" aria-label="Left">←</button>
+      <button class="padbtn" data-key="UP" aria-label="Up">↑</button>
+      <button class="padbtn" data-key="DOWN" aria-label="Down">↓</button>
+      <button class="padbtn" data-key="RIGHT" aria-label="Right">→</button>
+      <button class="padbtn wide" data-key="ENTER" aria-label="OK, like A on the controller">A OK</button>
+      <button class="padbtn full" id="np-closepop">Close side pop-up (↓ then A)</button>
     </div>
     <div class="tabs" id="np-tabs">
       <button class="tab active" data-tab="queue">Up next</button>

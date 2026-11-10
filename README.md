@@ -56,6 +56,15 @@ which kind they are. TV tab → Home feed sets the share (default 30 %). When
 the YouTube login fails, Home switches to 100 % own picks by itself and says
 so; it goes back on the next refresh that finds the login working.
 
+**Tune tab** (bottom bar): everything the own picks are built from, editable.
+Set the mix; add **topics** (searched and mixed in); add **words to keep
+out** (matched against title and channel name); **pin** channels (always
+draw their new uploads) or **block** them (never shown, never a starting
+point; also available from any video's sheet); see and forget the played or
+queued videos that picks start from; unhide swiped-away videos; reset. It all
+lives on the phone and applies to MyTube's picks, not to YouTube's own
+recommendations.
+
 **Channel pages:** every video card shows the channel's avatar left of the
 title; tap it for the channel page (banner, avatar, handle, subscribers,
 video count, description), with **Videos** (Latest / Popular / Oldest),
