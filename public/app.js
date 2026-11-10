@@ -53,7 +53,7 @@ function toast(message, { error = false, ms } = {}) {
   toastTimer = setTimeout(() => (t.hidden = true), ms || (error ? 7000 : 3000));
 }
 function showError(e) {
-  debug.log('error', `${e && e.message ? e.message : String(e)}`, e && e.code ? { code: e.code, detail: e.detail } : e && e.stack ? e.stack.split('\n').slice(0, 4).join(' | ') : undefined);
+  if (!(e && e.logged)) debug.log('error', `${e && e.message ? e.message : String(e)}`, e && e.code ? { code: e.code, detail: e.detail } : e && e.stack ? e.stack.split('\n').slice(0, 4).join(' | ') : undefined);
   const code = e && e.code ? ` [${e.code}]` : '';
   toast(`${e && e.message ? e.message : String(e)}${code}`, { error: true });
 }
