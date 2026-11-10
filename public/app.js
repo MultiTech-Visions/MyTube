@@ -6,7 +6,7 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
-import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, channelPage as apiChannelPage, sendFeedback as apiSendFeedback, mix as apiMix } from './api.js';
+import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, channelPage as apiChannelPage, sendFeedback as apiSendFeedback, mix as apiMix, channelInfo as apiChannelInfo } from './api.js';
 import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist, sponsorSegments as apiSponsorSegments } from './api.js';
 import { store, AD_DEFAULTS } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
@@ -276,7 +276,8 @@ function mixSeeds() {
   const blocked = new Set(T.blocked);
   const plays = T.plays.filter((p) => !blocked.has(p.channelId));
   let videos = plays.length ? [plays[0].videoId, ...shuffled(plays.slice(1, 15)).slice(0, 2).map((p) => p.videoId)] : [];
-  if (videos.length === 0 && T.plays.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)]).slice(0, 3);
+  const excluded = new Set(T.excluded.map((x) => x.videoId));
+  if (videos.length === 0 && T.plays.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)].filter((id) => !excluded.has(id))).slice(0, 3);
   const channels = shuffled(T.pinned).slice(0, 2);
   const top = channelStats().filter((c) => c.plays > 0 && !blocked.has(c.channelId) && !channels.includes(c.channelId)).slice(0, 8).map((c) => c.channelId);
   channels.push(...shuffled(top).slice(0, channels.length ? 1 : 2));
@@ -291,13 +292,14 @@ function channelStats() {
   for (const p of T.plays) if (p.channelId) counts.set(p.channelId, (counts.get(p.channelId) || 0) + 1);
   const ids = new Set([...counts.keys(), ...T.subs, ...T.pinned, ...T.blocked]);
   return [...ids]
-    .map((channelId) => ({ channelId, name: T.names[channelId] || channelId, plays: counts.get(channelId) || 0, subscribed: T.subs.includes(channelId), pinned: T.pinned.includes(channelId), blocked: T.blocked.includes(channelId) }))
+    .map((channelId) => ({ channelId, name: T.names[channelId] || channelId, named: Boolean(T.names[channelId]), avatar: T.avatars[channelId] || '', plays: counts.get(channelId) || 0, subscribed: T.subs.includes(channelId), pinned: T.pinned.includes(channelId), blocked: T.blocked.includes(channelId) }))
     .sort((x, y) => y.plays - x.plays || x.name.localeCompare(y.name));
 }
-/** False for a pick from a blocked channel or with a blocked word in its title or channel name. */
+/** False for a pick from a blocked channel, a video marked "don't use", or with a blocked word in its title or channel name. */
 function pickAllowed(v) {
   const T = store.taste;
   if (v.channelId && T.blocked.includes(v.channelId)) return false;
+  if (T.excluded.some((x) => x.videoId === v.videoId)) return false;
   const text = `${v.title} ${v.channel}`.toLowerCase();
   return !T.blockedWords.some((w) => text.includes(w.toLowerCase()));
 }
@@ -729,7 +731,7 @@ function tvQueueIsOurs() {
 }
 
 async function playNow(v) {
-  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null); // a signal for MyTube's own picks
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null, v.channelAvatar ? v.channelAvatar : null); // a signal for MyTube's own picks
   const t0 = performance.now();
   debug.log('app', `playNow ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned });
   store.rememberVideo(v);
@@ -758,7 +760,7 @@ function prewarm() {
 }
 
 async function playNext(v) {
-  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null); // a signal for MyTube's own picks
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null, v.channelAvatar ? v.channelAvatar : null); // a signal for MyTube's own picks
   debug.log('app', `playNext ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
@@ -770,7 +772,7 @@ async function playNext(v) {
 }
 
 async function addToQueue(v) {
-  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null); // a signal for MyTube's own picks
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null, v.channelAvatar ? v.channelAvatar : null); // a signal for MyTube's own picks
   debug.log('app', `addToQueue ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
@@ -2130,7 +2132,7 @@ remote.addEventListener('player', () => {
     resetAdRun(pl.videoId);
     if (pl.videoId) {
       const known = store.video(pl.videoId);
-      store.recordPlay(pl.videoId, known && known.channelId ? known.channelId : null, known && known.channel ? known.channel : null);
+      store.recordPlay(pl.videoId, known && known.channelId ? known.channelId : null, known && known.channel ? known.channel : null, known && known.channelAvatar ? known.channelAvatar : null);
       syncCurrentFromTv();
       loadWatch(pl.videoId).catch(showError);
       if (ADS().sponsorBlock) loadSponsorSegments(pl.videoId).catch(showError);
@@ -2347,7 +2349,7 @@ function renderTvView() {
 // ---------------------------------------------------------------------------
 // Tune tab: everything MyTube's own picks are built from, editable
 // ---------------------------------------------------------------------------
-const TUNE = { showAllChannels: false, showAllPlays: false };
+const TUNE = { showAllChannels: false, openDays: new Set(['Today']), asked: new Set(), resolving: false };
 
 /** flag: 'pinned' | 'blocked'. Pinning unblocks and blocking unpins; blocked picks leave the feed at once. */
 function setChannelFlag(channelId, name, flag, on) {
@@ -2398,10 +2400,72 @@ function wordPanel(listName, title, hint, placeholder) {
 function channelRow(c) {
   const sub = [c.plays ? `${c.plays} played/queued` : '', c.subscribed ? 'subscribed' : ''].filter(Boolean).join(' · ');
   return el('div', { class: 'tune-row' },
-    el('button', { class: 'tune-name', onclick: guard(() => openChannel({ channelId: c.channelId, title: c.name })) }, c.name, sub ? el('small', {}, sub) : null),
+    c.avatar ? el('img', { class: 'tune-avatar', src: c.avatar, alt: '', loading: 'lazy' }) : el('div', { class: 'tune-avatar' }),
+    el('button', { class: 'tune-name', onclick: guard(() => openChannel({ channelId: c.channelId, title: c.name })) }, c.named ? c.name : 'Looking up channel…', sub ? el('small', {}, sub) : null),
     el('button', { class: `chip${c.pinned ? ' active' : ''}`, onclick: () => { setChannelFlag(c.channelId, null, 'pinned', !c.pinned); renderTuneView(); } }, c.pinned ? 'Pinned' : 'Pin'),
     el('button', { class: `chip${c.blocked ? ' active danger' : ''}`, onclick: () => { setChannelFlag(c.channelId, null, 'blocked', !c.blocked); renderTuneView(); } }, c.blocked ? 'Blocked' : 'Block')
   );
+}
+/**
+ * Fetches name and icon for the listed channels that lack either (8 per request), stores them
+ * for good and redraws. Each id is asked once per app session.
+ */
+async function resolveChannels(channels) {
+  const missing = channels.filter((c) => (!c.named || !c.avatar) && !TUNE.asked.has(c.channelId)).map((c) => c.channelId);
+  if (missing.length === 0 || TUNE.resolving) return;
+  TUNE.resolving = true;
+  try {
+    for (let i = 0; i < missing.length; i += 8) {
+      const batch = missing.slice(i, i + 8);
+      for (const id of batch) TUNE.asked.add(id);
+      const res = await apiChannelInfo(batch);
+      const failed = res.channels.filter((c) => c.error);
+      for (const c of res.channels) {
+        if (c.error) continue;
+        store.taste.names[c.channelId] = c.name;
+        if (c.avatar) store.taste.avatars[c.channelId] = c.avatar;
+      }
+      store.saveTaste();
+      debug.log('app', `tune: looked up ${batch.length} channels, ${failed.length} failed`, failed.length ? failed : undefined);
+      if (ui.view === 'tune') renderTuneView();
+    }
+  } finally {
+    TUNE.resolving = false;
+  }
+}
+const videoThumb = (videoId) => {
+  const known = store.video(videoId);
+  return known && known.thumbnail ? known.thumbnail : `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+};
+function dayLabel(at) {
+  const d = new Date(at);
+  const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(new Date()) - startOf(d)) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+/** One played / excluded video with its thumbnail and the given action buttons. */
+function videoRow(entry, ...buttons) {
+  const known = store.video(entry.videoId);
+  const T = store.taste;
+  return el('div', { class: 'tune-row' },
+    el('img', { class: 'tune-thumb', src: videoThumb(entry.videoId), alt: '', loading: 'lazy' }),
+    el('div', { class: 'tune-name wrap' }, known ? known.title : 'Started on the TV (title not known to this phone)', el('small', {}, entry.channelId ? T.names[entry.channelId] || '' : known ? known.channel : '')),
+    el('div', { class: 'tune-btns' }, ...buttons)
+  );
+}
+/** Moves a video from "picks are based on" to "don't use" (and its picks off Home), or back. */
+function setExcluded(entry, on) {
+  const T = store.taste;
+  T.excluded = T.excluded.filter((x) => x.videoId !== entry.videoId);
+  T.plays = T.plays.filter((x) => x.videoId !== entry.videoId);
+  if (on) T.excluded.unshift({ videoId: entry.videoId, channelId: entry.channelId, at: Date.now() });
+  else T.plays.unshift({ videoId: entry.videoId, channelId: entry.channelId, at: Date.now() });
+  store.saveTaste();
+  debug.log('app', `tune: video ${entry.videoId} ${on ? "moved to don't use" : 'back in use'}`);
+  dropDisallowedPicks();
+  renderTuneView();
 }
 function renderTuneView() {
   const s = store.settings;
@@ -2443,25 +2507,43 @@ function renderTuneView() {
     )
   );
 
-  // --- Watched / queued videos used as starting points
-  const plays = TUNE.showAllPlays ? T.plays : T.plays.slice(0, 10);
+  // --- Watched / queued videos used as starting points, grouped by day
+  const days = [];
+  for (const pl of T.plays) {
+    const label = dayLabel(pl.at);
+    if (!days.length || days[days.length - 1].label !== label) days.push({ label, plays: [] });
+    days[days.length - 1].plays.push(pl);
+  }
   panels.push(
     el('div', { class: 'panel' },
       el('h3', {}, 'Videos picks are based on'),
-      el('p', {}, 'What you played or queued here, newest first. "Related" picks start from the newest one and two random ones of the latest 15. Remove one to stop it steering your picks.'),
-      ...(T.plays.length
-        ? plays.map((pl) => {
-            const known = store.video(pl.videoId);
-            return el('div', { class: 'tune-row' },
-              el('div', { class: 'tune-name' }, known ? known.title : `Video ${pl.videoId} (started on the TV)`, el('small', {}, joinMeta(pl.channelId ? T.names[pl.channelId] || '' : '', new Date(pl.at).toLocaleDateString()))),
-              el('button', { class: 'chip', onclick: () => { T.plays = T.plays.filter((x) => x.videoId !== pl.videoId); store.saveTaste(); debug.log('app', `tune: forgot play ${pl.videoId}`); renderTuneView(); } }, 'Forget')
+      el('p', {}, 'What you played or queued here. "Related" picks start from the newest one and two random ones of the latest 15. Don\'t use: moves it to the list below, so it never steers your picks and never shows up as one. Forget: just removes it from here.'),
+      ...(days.length
+        ? days.map((day) => {
+            const box = el('details', { class: 'tune-day' },
+              el('summary', {}, day.label, el('span', {}, `${day.plays.length} video${day.plays.length === 1 ? '' : 's'}`)),
+              ...day.plays.map((pl) => videoRow(pl,
+                el('button', { class: 'chip danger-text', onclick: () => setExcluded(pl, true) }, "Don't use"),
+                el('button', { class: 'chip', onclick: () => { T.plays = T.plays.filter((x) => x.videoId !== pl.videoId); store.saveTaste(); debug.log('app', `tune: forgot play ${pl.videoId}`); renderTuneView(); } }, 'Forget')
+              ))
             );
+            box.open = TUNE.openDays.has(day.label);
+            box.addEventListener('toggle', () => { if (box.open) TUNE.openDays.add(day.label); else TUNE.openDays.delete(day.label); });
+            return box;
           })
         : [el('p', {}, 'Nothing yet.')]),
       el('div', { class: 'row' },
-        T.plays.length > plays.length ? el('button', { class: 'btn ghost small', onclick: () => { TUNE.showAllPlays = true; renderTuneView(); } }, `Show all ${T.plays.length}`) : null,
-        T.plays.length ? el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Forget every played and queued video? Channels you pinned or blocked and your keywords stay.')) return; T.plays = []; store.saveTaste(); debug.log('app', 'tune: forgot all plays'); renderTuneView(); } }, 'Forget all') : null
+        T.plays.length ? el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Forget every played and queued video? Channels you pinned or blocked, your keywords and the "don\'t use" list stay.')) return; T.plays = []; store.saveTaste(); debug.log('app', 'tune: forgot all plays'); renderTuneView(); } }, 'Forget all') : null
       )
+    )
+  );
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, `Don't use (${T.excluded.length})`),
+      el('p', {}, 'Videos you watched but do not want more of. They are never a starting point for picks and never appear as a pick. Playing one again does not put it back.'),
+      ...(T.excluded.length
+        ? T.excluded.map((x) => videoRow(x, el('button', { class: 'chip', onclick: () => setExcluded(x, false) }, 'Use again'), el('button', { class: 'chip', onclick: () => { T.excluded = T.excluded.filter((y) => y.videoId !== x.videoId); store.saveTaste(); debug.log('app', `tune: removed ${x.videoId} from don't use`); renderTuneView(); } }, 'Remove')))
+        : [el('p', {}, 'None yet.')])
     )
   );
 
@@ -2472,12 +2554,13 @@ function renderTuneView() {
       el('div', { class: 'kv' }, 'Videos you swiped away or hid', el('b', {}, String(store.hidden.length))),
       el('div', { class: 'row' },
         el('button', { class: 'btn ghost small', disabled: store.hidden.length === 0, onclick: () => { if (!confirm(`Let all ${store.hidden.length} hidden videos show up again?`)) return; for (const id of store.hidden.slice()) store.unhide(id); debug.log('app', 'tune: unhid all videos'); renderTuneView(); } }, 'Unhide all'),
-        el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Erase everything on this page: watched videos, discovered channels, pins, blocks and keywords?')) return; store.taste = { plays: [], subs: [], names: {}, pinned: [], blocked: [], keywords: [], blockedWords: [] }; store.saveTaste(); MIX.pool = []; debug.log('app', 'tune: reset everything'); renderTuneView(); } }, 'Reset everything here')
+        el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Erase everything on this page: watched videos, the excluded-videos list, discovered channels, pins, blocks and keywords?')) return; store.resetTaste(); MIX.pool = []; debug.log('app', 'tune: reset everything'); renderTuneView(); } }, 'Reset everything here')
       )
     )
   );
 
   $('#view-tune').replaceChildren(el('div', { class: 'settings' }, ...panels));
+  resolveChannels([...pinned, ...blocked, ...shown]).catch(showError);
 }
 
 async function checkAvailability() {

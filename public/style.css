@@ -374,3 +374,14 @@ body.has-mini .undo { bottom: calc(var(--nav-h) + var(--mini-h) + 12px + var(--s
 .padbtn.wide { flex: 1.6; font-size: 14px; font-weight: 500; }
 .padbtn.full { flex: 1 0 100%; font-size: 13px; }
 .padbtn:active { background: #fff; color: #000; }
+
+.tune-avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; background: var(--surface-2); object-fit: cover; }
+.tune-thumb { width: 96px; height: 54px; border-radius: 6px; flex: none; background: #000; object-fit: cover; }
+.tune-name.wrap { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-size: 13px; }
+.tune-btns { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.tune-btns .chip { height: 28px; font-size: 12px; padding: 0 10px; }
+.chip.danger-text { color: #ff8a80; }
+.tune-day { border-bottom: 1px solid var(--surface-2); }
+.tune-day summary { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; font-size: 14px; font-weight: 500; cursor: pointer; }
+.tune-day summary span { color: var(--text-2); font-size: 12px; font-weight: 400; }
+.tune-day .tune-row:last-child { border-bottom: none; }

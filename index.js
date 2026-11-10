@@ -207,6 +207,9 @@ async function api(req, res) {
     case 'POST /api/mix': {
       return sendJson(res, 200, await mix.build(jsonBody(req)));
     }
+    case 'POST /api/channels/info': {
+      return sendJson(res, 200, await mix.channelInfo(jsonBody(req)));
+    }
     case 'POST /api/feedback': {
       return sendJson(res, 200, await innertube.feedback(cookiesFor(req), requireString(jsonBody(req), 'token', 'body')));
     }

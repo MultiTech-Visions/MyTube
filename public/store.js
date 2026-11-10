@@ -46,10 +46,11 @@ export const AD_DEFAULTS = {
 /**
  * Everything MyTube's own picks are tailored by (Tune tab).
  * plays: [{ videoId, channelId|null, at }] newest first; subs/pinned/blocked: channel ids;
- * names: channelId -> name; keywords: searched for picks; blockedWords: picks whose title or
+ * names / avatars: channelId -> name / icon URL; excluded: videos you marked "don't use"
+ * ([{ videoId, channelId|null, at }]): never a starting point, never shown as a pick; keywords: searched for picks; blockedWords: picks whose title or
  * channel contains one are dropped.
  */
-const TASTE_DEFAULTS = { plays: [], subs: [], names: {}, pinned: [], blocked: [], keywords: [], blockedWords: [] };
+const TASTE_DEFAULTS = { plays: [], subs: [], names: {}, avatars: {}, excluded: [], pinned: [], blocked: [], keywords: [], blockedWords: [] };
 
 export const store = {
   /** Stable id for this phone; the TV uses it to recognise the same remote across reconnects. */
@@ -82,7 +83,7 @@ export const store = {
   /** Small cache of video metadata by id (titles for queue rows the TV added, etc.). */
   videos: load(KEYS.videos, {}),
   rememberVideo(v) {
-    this.videos[v.videoId] = { videoId: v.videoId, title: v.title, channel: v.channel, duration: v.duration, thumbnail: v.thumbnail, ...(v.channelId ? { channelId: v.channelId } : {}) };
+    this.videos[v.videoId] = { videoId: v.videoId, title: v.title, channel: v.channel, duration: v.duration, thumbnail: v.thumbnail, ...(v.channelId ? { channelId: v.channelId } : {}), ...(v.channelAvatar ? { channelAvatar: v.channelAvatar } : {}) };
     const ids = Object.keys(this.videos);
     if (ids.length > 400) for (const id of ids.slice(0, ids.length - 400)) delete this.videos[id];
     save(KEYS.videos, this.videos);
@@ -96,11 +97,17 @@ export const store = {
    * (newest first) and the subscription list as last seen while the login worked.
    */
   taste: load(KEYS.taste, JSON.parse(JSON.stringify(TASTE_DEFAULTS))),
+  resetTaste() {
+    this.taste = JSON.parse(JSON.stringify(TASTE_DEFAULTS));
+    this.saveTaste();
+  },
   saveTaste() {
     save(KEYS.taste, this.taste);
   },
   /** channelId / channelName may be null when the TV started a video this phone knows nothing about. */
-  recordPlay(videoId, channelId, channelName) {
+  recordPlay(videoId, channelId, channelName, channelAvatar) {
+    if (this.taste.excluded.some((x) => x.videoId === videoId)) return; // marked "don't use"
+    if (channelId && channelAvatar) this.taste.avatars[channelId] = channelAvatar;
     const before = this.taste.plays.find((p) => p.videoId === videoId);
     const plays = this.taste.plays.filter((p) => p.videoId !== videoId);
     // A later report without the channel must not erase a channel learned earlier.
@@ -111,7 +118,10 @@ export const store = {
   },
   rememberSubs(channels) {
     this.taste.subs = channels.map((c) => c.channelId);
-    for (const c of channels) if (c.title) this.taste.names[c.channelId] = c.title;
+    for (const c of channels) {
+      if (c.title) this.taste.names[c.channelId] = c.title;
+      if (c.avatar) this.taste.avatars[c.channelId] = c.avatar;
+    }
     this.saveTaste();
   },
 
