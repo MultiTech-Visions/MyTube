@@ -80,5 +80,6 @@ export const channelVideos = (id, continuation) =>
 export const channelPage = (id, tab, q, continuation) =>
   api(continuation ? `/api/channel?continuation=${encodeURIComponent(continuation)}` : `/api/channel?id=${encodeURIComponent(id)}&tab=${tab}${q ? `&q=${encodeURIComponent(q)}` : ''}`);
 export const mix = (seeds) => api('/api/mix', { method: 'POST', body: seeds });
+export const channelInfo = (channels) => api('/api/channels/info', { method: 'POST', body: { channels } });
 export const sendFeedback = (token, opts = {}) => api('/api/feedback', { method: 'POST', body: { token }, ...opts });
 export const sponsorSegments = (videoId) => api(`/api/sponsorblock?id=${encodeURIComponent(videoId)}`);
