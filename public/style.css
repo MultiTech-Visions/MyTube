@@ -355,3 +355,15 @@ body.has-mini .undo { bottom: calc(var(--nav-h) + var(--mini-h) + 12px + var(--s
 .undo-bar div { height: 100%; width: 100%; background: #8ab4f8; transition: width 10s linear; }
 .undo-bar div.run { width: 0; }
 .toast { bottom: calc(var(--nav-h) + var(--mini-h) + 84px + var(--safe-b)); }
+
+/* Tune tab */
+.tune-add { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.tune-add .field { flex: 1; min-width: 0; }
+.tune-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.tune-chip { display: inline-flex; align-items: center; gap: 8px; }
+.tune-chip .x { color: var(--text-2); font-size: 16px; }
+.tune-group { margin-top: 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-2); }
+.tune-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--surface-2); }
+.tune-name { flex: 1; min-width: 0; text-align: left; color: var(--text); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tune-name small { display: block; color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.chip.active.danger { background: #ff8a80; color: #000; }

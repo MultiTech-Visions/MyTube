@@ -129,6 +129,7 @@ function showView(name) {
   if (name === 'search') setTimeout(() => $('#search-input').focus(), 50);
   if (name === 'queue') renderQueue();
   if (name === 'tv') renderTvView();
+  if (name === 'tune') renderTuneView();
   if (name === 'library' && !ui.library.loaded) loadLibrary(true).catch(showError);
   if (name === 'subs' && !SUBS.loaded) loadSubs(true).catch(showError);
   window.scrollTo(0, 0);
@@ -176,7 +177,7 @@ function renderFeedList() {
 // ---------------------------------------------------------------------------
 // Video cards
 // ---------------------------------------------------------------------------
-const PICK_LABEL = { related: 'MyTube: like what you watched', channel: 'MyTube: channel you watch', explore: 'MyTube: explore' };
+const PICK_LABEL = { related: 'MyTube: like what you watched', channel: 'MyTube: channel you watch', keyword: 'MyTube: your keywords', explore: 'MyTube: explore' };
 function card(v, { compact = false } = {}) {
   const sub = joinMeta(v.channel, v.views, v.published, v.pick ? PICK_LABEL[v.pick] : '');
   const node = el(
@@ -265,29 +266,52 @@ function shuffled(list) {
   }
   return a;
 }
-/** What to ask the server about: the latest watched video plus random recent ones, and channels watched most / subscribed. */
+/**
+ * What to ask the server about (all tailored in the Tune tab): the latest watched video plus
+ * random recent ones, pinned channels, channels watched most, a subscription, and keywords.
+ * Blocked channels are never seeds.
+ */
 function mixSeeds() {
-  const plays = store.taste.plays;
+  const T = store.taste;
+  const blocked = new Set(T.blocked);
+  const plays = T.plays.filter((p) => !blocked.has(p.channelId));
   let videos = plays.length ? [plays[0].videoId, ...shuffled(plays.slice(1, 15)).slice(0, 2).map((p) => p.videoId)] : [];
-  if (videos.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)]).slice(0, 3);
-  const counts = new Map();
-  for (const p of plays) if (p.channelId) counts.set(p.channelId, (counts.get(p.channelId) || 0) + 1);
-  const top = [...counts].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([id]) => id);
-  const channels = shuffled(top).slice(0, 2);
-  const sub = shuffled(store.taste.subs.filter((id) => !channels.includes(id)))[0];
-  if (sub) channels.push(sub);
-  return { videos: [...new Set(videos)], channels };
+  if (videos.length === 0 && T.plays.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)]).slice(0, 3);
+  const channels = shuffled(T.pinned).slice(0, 2);
+  const top = channelStats().filter((c) => c.plays > 0 && !blocked.has(c.channelId) && !channels.includes(c.channelId)).slice(0, 8).map((c) => c.channelId);
+  channels.push(...shuffled(top).slice(0, channels.length ? 1 : 2));
+  const sub = shuffled(T.subs.filter((id) => !channels.includes(id) && !blocked.has(id)))[0];
+  if (sub && channels.length < 4) channels.push(sub);
+  return { videos: [...new Set(videos)], channels, keywords: shuffled(T.keywords).slice(0, 2) };
 }
-async function refillMix() {
+/** Every channel this phone knows, most played first: [{ channelId, name, plays, subscribed, pinned, blocked }]. */
+function channelStats() {
+  const T = store.taste;
+  const counts = new Map();
+  for (const p of T.plays) if (p.channelId) counts.set(p.channelId, (counts.get(p.channelId) || 0) + 1);
+  const ids = new Set([...counts.keys(), ...T.subs, ...T.pinned, ...T.blocked]);
+  return [...ids]
+    .map((channelId) => ({ channelId, name: T.names[channelId] || channelId, plays: counts.get(channelId) || 0, subscribed: T.subs.includes(channelId), pinned: T.pinned.includes(channelId), blocked: T.blocked.includes(channelId) }))
+    .sort((x, y) => y.plays - x.plays || x.name.localeCompare(y.name));
+}
+/** False for a pick from a blocked channel or with a blocked word in its title or channel name. */
+function pickAllowed(v) {
+  const T = store.taste;
+  if (v.channelId && T.blocked.includes(v.channelId)) return false;
+  const text = `${v.title} ${v.channel}`.toLowerCase();
+  return !T.blockedWords.some((w) => text.includes(w.toLowerCase()));
+}
+/** `shown`: the videos already on Home (empty on a fresh load, so a rebuild may show them again). */
+async function refillMix(shown) {
   const seeds = mixSeeds();
-  if (seeds.videos.length + seeds.channels.length === 0) {
+  if (seeds.videos.length + seeds.channels.length + seeds.keywords.length === 0) {
     MIX.dry = true;
-    debug.log('app', 'own picks: nothing watched or queued on this phone yet, so no seeds');
+    debug.log('app', 'own picks: nothing watched or queued on this phone yet and no keywords, so no seeds');
     return;
   }
   const res = await apiMix(seeds);
-  const known = new Set([...ui.feed.items.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.hidden, ...store.taste.plays.map((p) => p.videoId), ...Q.items.map((it) => it.videoId)]);
-  const fresh = res.items.filter((v) => !known.has(v.videoId));
+  const known = new Set([...shown.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.hidden, ...store.taste.plays.map((p) => p.videoId), ...Q.items.map((it) => it.videoId)]);
+  const fresh = res.items.filter((v) => !known.has(v.videoId) && pickAllowed(v));
   MIX.pool.push(...fresh);
   if (fresh.length === 0) MIX.dry = true;
   debug.log('app', `own picks: ${res.items.length} received, ${fresh.length} new (pool ${MIX.pool.length})`, { seeds, sources: res.sources });
@@ -321,6 +345,7 @@ async function feedPage({ reset, freshBatch }) {
     f.ytDown = store.settings.cookies ? null : 'no YouTube cookies on this phone';
   }
   // A fresh load always asks YouTube once, even at 100 % own picks, so a broken login is noticed.
+  const shown = reset ? [] : f.items;
   const askYoutube = !f.ytDown && (reset || (pct < 100 && (f.continuation || freshBatch)));
   const youtube = async () => {
     if (!askYoutube) return [];
@@ -342,14 +367,14 @@ async function feedPage({ reset, freshBatch }) {
       return [];
     }
     if (pct === 100) return [];
-    const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
+    const known = new Set([...shown.map((v) => v.videoId), ...store.hidden]);
     return res.items.filter((v) => !known.has(v.videoId));
   };
   // Both at once on a fresh load; later pages only refill the pool when it runs low.
   const wantMine = () => (f.ytDown || pct === 100 ? 20 : pct === 0 ? 0 : 10);
   const refill = async () => {
     if (wantMine() === 0 || MIX.pool.length >= wantMine() || MIX.dry) return;
-    await refillMix();
+    await refillMix(shown);
   };
   const [yt] = await Promise.all([youtube(), reset ? refill() : null]);
   if (f.ytDown) await refill(); // YouTube failed just now: make sure there are picks to show
@@ -384,7 +409,7 @@ async function loadFeed(reset) {
       notice.hidden = true;
     }
     if (f.items.length === 0 && reset) {
-      $('#feed-list').replaceChildren(el('p', { class: 'empty' }, f.ytDown ? 'Nothing to recommend yet: MyTube builds its own picks from what you play and queue here. Use Search to get started.' : 'YouTube returned an empty feed.'));
+      $('#feed-list').replaceChildren(el('p', { class: 'empty' }, f.ytDown ? 'Nothing to recommend yet: MyTube builds its own picks from what you play and queue here. Use Search, or add keywords in the Tune tab.' : 'YouTube returned an empty feed.'));
     }
   } finally {
     f.loading = false;
@@ -448,6 +473,10 @@ function openSheet(v) {
   const fromHome = ui.view === 'home';
   const opts = (v.feedback || []).map((f) => el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, f)) }, el('span', { class: 'ico', html: icon('hide') }), f.label));
   if (fromHome) opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, null)) }, el('span', { class: 'ico', html: icon('hide') }), 'Hide from my feed'));
+  if (v.channelId) {
+    const blockedNow = store.taste.blocked.includes(v.channelId);
+    opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => { setChannelFlag(v.channelId, v.channel, 'blocked', !blockedNow); closeSheet(); toast(blockedNow ? `${v.channel} is allowed in MyTube picks again` : `No more MyTube picks from ${v.channel}`); }) }, el('span', { class: 'ico', html: icon('hide') }), blockedNow ? 'Unblock channel in MyTube picks' : 'Block channel in MyTube picks'));
+  }
   $('#sheet-feedback').replaceChildren(...opts);
   $('#sheet').hidden = false;
   $('#sheet-backdrop').hidden = false;
@@ -700,7 +729,7 @@ function tvQueueIsOurs() {
 }
 
 async function playNow(v) {
-  store.recordPlay(v.videoId, v.channelId ? v.channelId : null); // a signal for MyTube's own picks
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null); // a signal for MyTube's own picks
   const t0 = performance.now();
   debug.log('app', `playNow ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned });
   store.rememberVideo(v);
@@ -729,7 +758,7 @@ function prewarm() {
 }
 
 async function playNext(v) {
-  store.recordPlay(v.videoId, v.channelId ? v.channelId : null); // a signal for MyTube's own picks
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null); // a signal for MyTube's own picks
   debug.log('app', `playNext ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
@@ -741,7 +770,7 @@ async function playNext(v) {
 }
 
 async function addToQueue(v) {
-  store.recordPlay(v.videoId, v.channelId ? v.channelId : null); // a signal for MyTube's own picks
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null); // a signal for MyTube's own picks
   debug.log('app', `addToQueue ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
@@ -2094,7 +2123,7 @@ remote.addEventListener('player', () => {
     resetAdRun(pl.videoId);
     if (pl.videoId) {
       const known = store.video(pl.videoId);
-      store.recordPlay(pl.videoId, known && known.channelId ? known.channelId : null);
+      store.recordPlay(pl.videoId, known && known.channelId ? known.channelId : null, known && known.channel ? known.channel : null);
       syncCurrentFromTv();
       loadWatch(pl.videoId).catch(showError);
       if (ADS().sponsorBlock) loadSponsorSegments(pl.videoId).catch(showError);
@@ -2257,16 +2286,6 @@ function renderTvView() {
     )
   );
 
-  // --- Home feed mix
-  const feedMix = el('select', { onchange: (e) => { s.feedMix = Number(e.target.value); store.saveSettings(); ui.feed.loaded = false; debug.log('app', `setting feedMix = ${s.feedMix}`); } }, ...[0, 10, 20, 30, 50, 70, 100].map((n) => el('option', { value: n, selected: s.feedMix === n }, n === 0 ? 'YouTube only' : n === 100 ? 'MyTube only' : `${n} % MyTube`)));
-  panels.push(
-    el('div', { class: 'panel' },
-      el('h3', {}, 'Home feed'),
-      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Mix', el('small', {}, "How much of Home is MyTube's own picks (built from what you play and queue here, your most-watched channels, and a few explore picks) next to YouTube's recommendations. When the YouTube login fails, Home switches to MyTube picks only.")), feedMix),
-      el('p', {}, `Built from ${store.taste.plays.length} played or queued videos and ${store.taste.subs.length} subscribed channels remembered on this phone.`)
-    )
-  );
-
   // --- Ads
   const ads = s.ads;
   const row = (key, label, hint) =>
@@ -2316,6 +2335,142 @@ function renderTvView() {
     )
   );
   root.replaceChildren(el('div', { class: 'settings' }, ...panels));
+}
+
+// ---------------------------------------------------------------------------
+// Tune tab: everything MyTube's own picks are built from, editable
+// ---------------------------------------------------------------------------
+const TUNE = { showAllChannels: false, showAllPlays: false };
+
+/** flag: 'pinned' | 'blocked'. Pinning unblocks and blocking unpins; blocked picks leave the feed at once. */
+function setChannelFlag(channelId, name, flag, on) {
+  const T = store.taste;
+  if (name) T.names[channelId] = name;
+  const other = flag === 'pinned' ? 'blocked' : 'pinned';
+  T[flag] = T[flag].filter((id) => id !== channelId);
+  if (on) {
+    T[flag].push(channelId);
+    T[other] = T[other].filter((id) => id !== channelId);
+  }
+  store.saveTaste();
+  debug.log('app', `tune: channel ${channelId} ${flag} = ${on}`);
+  dropDisallowedPicks();
+}
+/** Removes own picks that no longer pass the block lists from Home and from the unseen pool. */
+function dropDisallowedPicks() {
+  MIX.pool = MIX.pool.filter(pickAllowed);
+  const before = ui.feed.items.length;
+  ui.feed.items = ui.feed.items.filter((v) => !v.pick || pickAllowed(v));
+  if (ui.feed.items.length !== before) renderFeedList();
+}
+function addWord(listName, input) {
+  const word = input.value.trim();
+  if (!word) throw new Error('Type something first');
+  const T = store.taste;
+  if (T[listName].some((w) => w.toLowerCase() === word.toLowerCase())) throw new Error(`"${word}" is already in the list`);
+  T[listName].push(word);
+  store.saveTaste();
+  debug.log('app', `tune: ${listName} + "${word}"`);
+  if (listName === 'blockedWords') dropDisallowedPicks();
+  renderTuneView();
+}
+function wordPanel(listName, title, hint, placeholder) {
+  const input = el('input', { class: 'field', placeholder, autocomplete: 'off', maxlength: '60' });
+  const add = guard(() => addWord(listName, input));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  const words = store.taste[listName];
+  return el('div', { class: 'panel' },
+    el('h3', {}, title),
+    el('p', {}, hint),
+    el('div', { class: 'tune-add' }, input, el('button', { class: 'btn primary small', onclick: add }, 'Add')),
+    words.length
+      ? el('div', { class: 'tune-chips' }, ...words.map((w) => el('button', { class: 'chip tune-chip', title: 'Remove', onclick: () => { store.taste[listName] = store.taste[listName].filter((x) => x !== w); store.saveTaste(); debug.log('app', `tune: ${listName} - "${w}"`); renderTuneView(); } }, w, el('span', { class: 'x' }, '×'))))
+      : el('p', {}, 'None yet.')
+  );
+}
+function channelRow(c) {
+  const sub = [c.plays ? `${c.plays} played/queued` : '', c.subscribed ? 'subscribed' : ''].filter(Boolean).join(' · ');
+  return el('div', { class: 'tune-row' },
+    el('button', { class: 'tune-name', onclick: guard(() => openChannel({ channelId: c.channelId, title: c.name })) }, c.name, sub ? el('small', {}, sub) : null),
+    el('button', { class: `chip${c.pinned ? ' active' : ''}`, onclick: () => { setChannelFlag(c.channelId, null, 'pinned', !c.pinned); renderTuneView(); } }, c.pinned ? 'Pinned' : 'Pin'),
+    el('button', { class: `chip${c.blocked ? ' active danger' : ''}`, onclick: () => { setChannelFlag(c.channelId, null, 'blocked', !c.blocked); renderTuneView(); } }, c.blocked ? 'Blocked' : 'Block')
+  );
+}
+function renderTuneView() {
+  const s = store.settings;
+  const T = store.taste;
+  const panels = [];
+
+  // --- Mix
+  const feedMix = el('select', { onchange: (e) => { s.feedMix = Number(e.target.value); store.saveSettings(); ui.feed.loaded = false; debug.log('app', `setting feedMix = ${s.feedMix}`); } }, ...[0, 10, 20, 30, 50, 70, 100].map((n) => el('option', { value: n, selected: s.feedMix === n }, n === 0 ? 'YouTube only' : n === 100 ? 'MyTube only' : `${n} % MyTube`)));
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Home feed mix'),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Share of MyTube picks', el('small', {}, "Next to YouTube's recommendations while the login works. When it fails, Home is MyTube picks only.")), feedMix),
+      el('p', {}, `Picks are built from ${T.plays.length} played or queued videos, ${channelStats().filter((c) => c.plays > 0).length} channels you watched, ${T.subs.length} subscriptions, ${T.pinned.length} pinned channels and ${T.keywords.length} keywords. Everything below changes what you get.`),
+      el('div', { class: 'row' }, el('button', { class: 'btn primary', onclick: guard(async () => { showView('home'); await loadFeed(true); }) }, 'Rebuild Home now'))
+    )
+  );
+
+  // --- Words
+  panels.push(wordPanel('keywords', 'Topics I want', 'Each rebuild searches YouTube for two of these and mixes the results in. Use them for subjects you like that your history does not show yet.', 'e.g. rocket launches'));
+  panels.push(wordPanel('blockedWords', 'Words to keep out', 'A MyTube pick is dropped when its title or channel name contains one of these. Not case-sensitive.', 'e.g. reaction'));
+
+  // --- Channels
+  const stats = channelStats();
+  const pinned = stats.filter((c) => c.pinned);
+  const blocked = stats.filter((c) => c.blocked);
+  const rest = stats.filter((c) => !c.pinned && !c.blocked);
+  const shown = TUNE.showAllChannels ? rest : rest.slice(0, 12);
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Channels'),
+      el('p', {}, 'Pin: always draw new uploads from it. Block: never show its videos in MyTube picks, and never use it as a starting point. Tap a name to open the channel. To pin or block a channel that is not listed, open any of its videos and use the button in the sheet (block) or play one (it then shows up here).'),
+      pinned.length ? el('div', { class: 'tune-group' }, `Pinned (${pinned.length})`) : null,
+      ...pinned.map(channelRow),
+      blocked.length ? el('div', { class: 'tune-group' }, `Blocked (${blocked.length})`) : null,
+      ...blocked.map(channelRow),
+      el('div', { class: 'tune-group' }, `Discovered from what you watch (${rest.length})`),
+      ...(rest.length ? shown.map(channelRow) : [el('p', {}, 'None yet. Channels appear here as you play and queue videos, and when the Subs tab loads.')]),
+      rest.length > shown.length ? el('div', { class: 'row' }, el('button', { class: 'btn ghost small', onclick: () => { TUNE.showAllChannels = true; renderTuneView(); } }, `Show all ${rest.length}`)) : null
+    )
+  );
+
+  // --- Watched / queued videos used as starting points
+  const plays = TUNE.showAllPlays ? T.plays : T.plays.slice(0, 10);
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Videos picks are based on'),
+      el('p', {}, 'What you played or queued here, newest first. "Related" picks start from the newest one and two random ones of the latest 15. Remove one to stop it steering your picks.'),
+      ...(T.plays.length
+        ? plays.map((pl) => {
+            const known = store.video(pl.videoId);
+            return el('div', { class: 'tune-row' },
+              el('div', { class: 'tune-name' }, known ? known.title : `Video ${pl.videoId} (started on the TV)`, el('small', {}, joinMeta(pl.channelId ? T.names[pl.channelId] || '' : '', new Date(pl.at).toLocaleDateString()))),
+              el('button', { class: 'chip', onclick: () => { T.plays = T.plays.filter((x) => x.videoId !== pl.videoId); store.saveTaste(); debug.log('app', `tune: forgot play ${pl.videoId}`); renderTuneView(); } }, 'Forget')
+            );
+          })
+        : [el('p', {}, 'Nothing yet.')]),
+      el('div', { class: 'row' },
+        T.plays.length > plays.length ? el('button', { class: 'btn ghost small', onclick: () => { TUNE.showAllPlays = true; renderTuneView(); } }, `Show all ${T.plays.length}`) : null,
+        T.plays.length ? el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Forget every played and queued video? Channels you pinned or blocked and your keywords stay.')) return; T.plays = []; store.saveTaste(); debug.log('app', 'tune: forgot all plays'); renderTuneView(); } }, 'Forget all') : null
+      )
+    )
+  );
+
+  // --- Hidden videos + reset
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Hidden videos and reset'),
+      el('div', { class: 'kv' }, 'Videos you swiped away or hid', el('b', {}, String(store.hidden.length))),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn ghost small', disabled: store.hidden.length === 0, onclick: () => { if (!confirm(`Let all ${store.hidden.length} hidden videos show up again?`)) return; for (const id of store.hidden.slice()) store.unhide(id); debug.log('app', 'tune: unhid all videos'); renderTuneView(); } }, 'Unhide all'),
+        el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Erase everything on this page: watched videos, discovered channels, pins, blocks and keywords?')) return; store.taste = { plays: [], subs: [], names: {}, pinned: [], blocked: [], keywords: [], blockedWords: [] }; store.saveTaste(); MIX.pool = []; debug.log('app', 'tune: reset everything'); renderTuneView(); } }, 'Reset everything here')
+      )
+    )
+  );
+
+  $('#view-tune').replaceChildren(el('div', { class: 'settings' }, ...panels));
 }
 
 async function checkAvailability() {

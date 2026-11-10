@@ -43,6 +43,14 @@ export const AD_DEFAULTS = {
   sponsorCategories: ['sponsor', 'selfpromo', 'interaction'], // which SponsorBlock categories to skip
 };
 
+/**
+ * Everything MyTube's own picks are tailored by (Tune tab).
+ * plays: [{ videoId, channelId|null, at }] newest first; subs/pinned/blocked: channel ids;
+ * names: channelId -> name; keywords: searched for picks; blockedWords: picks whose title or
+ * channel contains one are dropped.
+ */
+const TASTE_DEFAULTS = { plays: [], subs: [], names: {}, pinned: [], blocked: [], keywords: [], blockedWords: [] };
+
 export const store = {
   /** Stable id for this phone; the TV uses it to recognise the same remote across reconnects. */
   deviceId,
@@ -87,16 +95,24 @@ export const store = {
    * What MyTube's own recommendations are built from: videos that played or were queued
    * (newest first) and the subscription list as last seen while the login worked.
    */
-  taste: load(KEYS.taste, { plays: [], subs: [] }),
-  recordPlay(videoId, channelId) {
-    const plays = this.taste.plays.filter((p) => p.videoId !== videoId);
-    plays.unshift({ videoId, channelId, at: Date.now() });
-    this.taste.plays = plays.slice(0, 150);
+  taste: load(KEYS.taste, JSON.parse(JSON.stringify(TASTE_DEFAULTS))),
+  saveTaste() {
     save(KEYS.taste, this.taste);
+  },
+  /** channelId / channelName may be null when the TV started a video this phone knows nothing about. */
+  recordPlay(videoId, channelId, channelName) {
+    const before = this.taste.plays.find((p) => p.videoId === videoId);
+    const plays = this.taste.plays.filter((p) => p.videoId !== videoId);
+    // A later report without the channel must not erase a channel learned earlier.
+    plays.unshift({ videoId, channelId: channelId || (before ? before.channelId : null), at: Date.now() });
+    this.taste.plays = plays.slice(0, 150);
+    if (channelId && channelName) this.taste.names[channelId] = channelName;
+    this.saveTaste();
   },
   rememberSubs(channels) {
     this.taste.subs = channels.map((c) => c.channelId);
-    save(KEYS.taste, this.taste);
+    for (const c of channels) if (c.title) this.taste.names[c.channelId] = c.title;
+    this.saveTaste();
   },
 
   /** Videos removed from recommendations; filtered out of Home even if YouTube sends them again. */
@@ -118,6 +134,18 @@ export const store = {
     for (const k of Object.values(KEYS)) localStorage.removeItem(k);
   },
 };
+
+// Taste saved before the Tune tab existed gets the new (empty) lists once.
+{
+  let changed = false;
+  for (const [k, v] of Object.entries(TASTE_DEFAULTS)) {
+    if (!(k in store.taste)) {
+      store.taste[k] = Array.isArray(v) ? [] : {};
+      changed = true;
+    }
+  }
+  if (changed) store.saveTaste();
+}
 
 // Added later: existing saved settings get the default once.
 if (!('feedMix' in store.settings)) {
