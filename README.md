@@ -47,6 +47,15 @@ next, previous and seek. Android only shows that for a page playing audio, so
 the app plays silence; it starts on your first tap after the TV starts
 playing.
 
+**Home is a mix.** Next to YouTube's recommendations, Home blends in MyTube's
+own picks, built without your account (`lib/mix.js`, `POST /api/mix`): videos
+related to what you played or queued here, the latest uploads of the channels
+you watch most and of your subscriptions (remembered on the phone while the
+login worked), and a few "explore" picks one step further out. Cards say
+which kind they are. TV tab → Home feed sets the share (default 30 %). When
+the YouTube login fails, Home switches to 100 % own picks by itself and says
+so; it goes back on the next refresh that finds the login working.
+
 **Channel pages:** every video card shows the channel's avatar left of the
 title; tap it for the channel page (banner, avatar, handle, subscribers,
 video count, description), with **Videos** (Latest / Popular / Oldest),

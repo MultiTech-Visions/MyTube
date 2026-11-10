@@ -4,7 +4,7 @@
  * erase them. Corrupt JSON throws on purpose; only a missing key gets its
  * initial value.
  */
-const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos' };
+const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos', taste: 'mytube.taste' };
 
 function load(key, initial) {
   const raw = localStorage.getItem(key);
@@ -52,6 +52,7 @@ export const store = {
     cookies: '',
     screen: null, // { screenId, loungeToken, name, expiration }
     autoConnect: true,
+    feedMix: 30, // % of Home that is MyTube's own picks while the YouTube login works
     ads: null, // filled in below
   }),
   saveSettings() {
@@ -73,13 +74,29 @@ export const store = {
   /** Small cache of video metadata by id (titles for queue rows the TV added, etc.). */
   videos: load(KEYS.videos, {}),
   rememberVideo(v) {
-    this.videos[v.videoId] = { videoId: v.videoId, title: v.title, channel: v.channel, duration: v.duration, thumbnail: v.thumbnail };
+    this.videos[v.videoId] = { videoId: v.videoId, title: v.title, channel: v.channel, duration: v.duration, thumbnail: v.thumbnail, ...(v.channelId ? { channelId: v.channelId } : {}) };
     const ids = Object.keys(this.videos);
     if (ids.length > 400) for (const id of ids.slice(0, ids.length - 400)) delete this.videos[id];
     save(KEYS.videos, this.videos);
   },
   video(videoId) {
     return this.videos[videoId];
+  },
+
+  /**
+   * What MyTube's own recommendations are built from: videos that played or were queued
+   * (newest first) and the subscription list as last seen while the login worked.
+   */
+  taste: load(KEYS.taste, { plays: [], subs: [] }),
+  recordPlay(videoId, channelId) {
+    const plays = this.taste.plays.filter((p) => p.videoId !== videoId);
+    plays.unshift({ videoId, channelId, at: Date.now() });
+    this.taste.plays = plays.slice(0, 150);
+    save(KEYS.taste, this.taste);
+  },
+  rememberSubs(channels) {
+    this.taste.subs = channels.map((c) => c.channelId);
+    save(KEYS.taste, this.taste);
   },
 
   /** Videos removed from recommendations; filtered out of Home even if YouTube sends them again. */
@@ -101,6 +118,12 @@ export const store = {
     for (const k of Object.values(KEYS)) localStorage.removeItem(k);
   },
 };
+
+// Added later: existing saved settings get the default once.
+if (!('feedMix' in store.settings)) {
+  store.settings.feedMix = 30;
+  store.saveSettings();
+}
 
 // Left behind by the removed "Send to TV screen" feature.
 if ('castCode' in store.settings) {

@@ -6,7 +6,7 @@
  * it: if the TV loses the queue, one tap pushes it back, resuming where the
  * last known position was.
  */
-import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, channelPage as apiChannelPage, sendFeedback as apiSendFeedback } from './api.js';
+import { subscriptions as apiSubscriptions, channelVideos as apiChannelVideos, channelPage as apiChannelPage, sendFeedback as apiSendFeedback, mix as apiMix } from './api.js';
 import { api, feed as apiFeed, search as apiSearch, watch as apiWatch, comments as apiComments, history as apiHistory, playlists as apiPlaylists, playlist as apiPlaylist, rate as apiRate, saveOptions as apiSaveOptions, editPlaylist as apiEditPlaylist, createPlaylist as apiCreatePlaylist, sponsorSegments as apiSponsorSegments } from './api.js';
 import { store, AD_DEFAULTS } from './store.js';
 import { Remote, PLAYER_STATE } from './lounge.js';
@@ -65,7 +65,7 @@ const guard = (fn) => (...args) => Promise.resolve().then(() => fn(...args)).cat
 // ---------------------------------------------------------------------------
 const ui = {
   view: 'home',
-  feed: { items: [], continuation: null, loading: false, loaded: false, signedIn: null },
+  feed: { items: [], continuation: null, loading: false, loaded: false, signedIn: null, ytDown: null },
   search: { q: '', items: [], continuation: null, loading: false },
   watch: { videoId: null, data: null, loading: false, related: [], relatedContinuation: null },
   npTab: 'queue',
@@ -139,11 +139,7 @@ $('#tvchip').addEventListener('click', () => showView('tv'));
 $('#btn-refresh').addEventListener('click', guard(() => loadFeed(true)));
 $('#btn-more').addEventListener('click', guard(moreFeed));
 
-/**
- * "Add more videos": the next page if YouTube gave one; otherwise a fresh
- * batch of recommendations with everything already on screen (or hidden)
- * filtered out, appended below without resetting the list.
- */
+/** "Add more videos": about 20 more, from YouTube's feed and MyTube's own picks in the set mix. */
 async function moreFeed() {
   const TARGET = 20; // new videos per tap
   const MAX_REQUESTS = 6;
@@ -157,17 +153,13 @@ async function moreFeed() {
   try {
     while (added < TARGET && requests < MAX_REQUESTS) {
       requests += 1;
-      // Next page when YouTube offered one, otherwise a fresh batch of recommendations.
-      const res = await apiFeed(f.continuation || null);
-      const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
-      const fresh = res.items.filter((v) => !known.has(v.videoId));
+      const fresh = await feedPage({ reset: false, freshBatch: true });
       f.items = f.items.concat(fresh);
-      f.continuation = res.continuation;
       added += fresh.length;
-      debug.log('app', `add more #${requests}: ${res.items.length} received, ${fresh.length} new (total new ${added}), more pages: ${Boolean(res.continuation)}`, res.shape);
       renderFeedList();
+      if (fresh.length === 0 && f.ytDown && MIX.dry) break;
     }
-    toast(added ? `Added ${added} videos` : 'YouTube sent nothing new right now. Try again in a minute.');
+    toast(added ? `Added ${added} videos` : 'Nothing new right now. Try again in a minute.');
   } finally {
     f.loading = false;
     $('#btn-more').disabled = false;
@@ -184,8 +176,9 @@ function renderFeedList() {
 // ---------------------------------------------------------------------------
 // Video cards
 // ---------------------------------------------------------------------------
+const PICK_LABEL = { related: 'MyTube: like what you watched', channel: 'MyTube: channel you watch', explore: 'MyTube: explore' };
 function card(v, { compact = false } = {}) {
-  const sub = joinMeta(v.channel, v.views, v.published);
+  const sub = joinMeta(v.channel, v.views, v.published, v.pick ? PICK_LABEL[v.pick] : '');
   const node = el(
     'button',
     { class: 'card', type: 'button', onclick: () => { if (!swipe.justSwiped) openSheet(v); } },
@@ -260,39 +253,144 @@ function renderList(container, items) {
 // ---------------------------------------------------------------------------
 // Home feed
 // ---------------------------------------------------------------------------
+// MyTube's own picks (server: lib/mix.js), blended into Home. `pool` holds picks not shown yet.
+const MIX = { pool: [], dry: false };
+const YT_DOWN_CODES = new Set(['COOKIES_REJECTED', 'SIGN_IN_REQUIRED', 'RATE_LIMITED']);
+
+function shuffled(list) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+/** What to ask the server about: the latest watched video plus random recent ones, and channels watched most / subscribed. */
+function mixSeeds() {
+  const plays = store.taste.plays;
+  let videos = plays.length ? [plays[0].videoId, ...shuffled(plays.slice(1, 15)).slice(0, 2).map((p) => p.videoId)] : [];
+  if (videos.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)]).slice(0, 3);
+  const counts = new Map();
+  for (const p of plays) if (p.channelId) counts.set(p.channelId, (counts.get(p.channelId) || 0) + 1);
+  const top = [...counts].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([id]) => id);
+  const channels = shuffled(top).slice(0, 2);
+  const sub = shuffled(store.taste.subs.filter((id) => !channels.includes(id)))[0];
+  if (sub) channels.push(sub);
+  return { videos: [...new Set(videos)], channels };
+}
+async function refillMix() {
+  const seeds = mixSeeds();
+  if (seeds.videos.length + seeds.channels.length === 0) {
+    MIX.dry = true;
+    debug.log('app', 'own picks: nothing watched or queued on this phone yet, so no seeds');
+    return;
+  }
+  const res = await apiMix(seeds);
+  const known = new Set([...ui.feed.items.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.hidden, ...store.taste.plays.map((p) => p.videoId), ...Q.items.map((it) => it.videoId)]);
+  const fresh = res.items.filter((v) => !known.has(v.videoId));
+  MIX.pool.push(...fresh);
+  if (fresh.length === 0) MIX.dry = true;
+  debug.log('app', `own picks: ${res.items.length} received, ${fresh.length} new (pool ${MIX.pool.length})`, { seeds, sources: res.sources });
+}
+/** `yt` with `mine` spread evenly through it. */
+function blend(yt, mine) {
+  if (mine.length === 0) return yt;
+  const out = [];
+  const every = (yt.length + mine.length) / mine.length;
+  let m = 0;
+  let y = 0;
+  for (let i = 0; i < yt.length + mine.length; i += 1) {
+    if ((m < mine.length && i >= Math.floor(m * every + every / 2)) || y >= yt.length) out.push(mine[m++]);
+    else out.push(yt[y++]);
+  }
+  return out;
+}
+const feedHasMore = () => Boolean(ui.feed.continuation) || ((ui.feed.ytDown || store.settings.feedMix > 0) && !MIX.dry);
+
+/**
+ * One page of Home: YouTube's feed blended with MyTube's own picks at the set
+ * percentage; 100 % own picks while the YouTube login is not working.
+ * `freshBatch` (Add more) asks YouTube for a new first page when it has no next page.
+ */
+async function feedPage({ reset, freshBatch }) {
+  const f = ui.feed;
+  const pct = store.settings.feedMix;
+  if (reset) {
+    MIX.pool = [];
+    MIX.dry = false;
+    f.ytDown = store.settings.cookies ? null : 'no YouTube cookies on this phone';
+  }
+  // A fresh load always asks YouTube once, even at 100 % own picks, so a broken login is noticed.
+  const askYoutube = !f.ytDown && (reset || (pct < 100 && (f.continuation || freshBatch)));
+  const youtube = async () => {
+    if (!askYoutube) return [];
+    let res;
+    try {
+      res = await apiFeed(reset ? null : f.continuation || null);
+    } catch (e) {
+      if (!YT_DOWN_CODES.has(e.code)) throw e;
+      f.ytDown = e.message; // already in the log (api); own picks take over
+      f.continuation = null;
+      return [];
+    }
+    f.continuation = res.continuation;
+    f.signedIn = res.signedIn;
+    debug.log('app', `home feed page: ${res.items.length} videos, more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
+    if (!res.signedIn) {
+      f.ytDown = 'YouTube is treating your cookies as signed out';
+      f.continuation = null;
+      return [];
+    }
+    if (pct === 100) return [];
+    const known = new Set([...f.items.map((v) => v.videoId), ...store.hidden]);
+    return res.items.filter((v) => !known.has(v.videoId));
+  };
+  // Both at once on a fresh load; later pages only refill the pool when it runs low.
+  const wantMine = () => (f.ytDown || pct === 100 ? 20 : pct === 0 ? 0 : 10);
+  const refill = async () => {
+    if (wantMine() === 0 || MIX.pool.length >= wantMine() || MIX.dry) return;
+    await refillMix();
+  };
+  const [yt] = await Promise.all([youtube(), reset ? refill() : null]);
+  if (f.ytDown) await refill(); // YouTube failed just now: make sure there are picks to show
+  else if (!reset) await refill();
+  let mineCount;
+  if (f.ytDown || pct === 100) mineCount = 20;
+  else if (pct === 0) mineCount = 0;
+  else mineCount = yt.length ? Math.round((yt.length * pct) / (100 - pct)) : 10;
+  return blend(yt, MIX.pool.splice(0, mineCount));
+}
+
 async function loadFeed(reset) {
   const f = ui.feed;
   if (f.loading) return;
-  if (!reset && !f.continuation) return;
+  if (!reset && !feedHasMore()) return;
   f.loading = true;
   $('#feed-loading').hidden = false;
   try {
-    const res = await apiFeed(reset ? null : f.continuation);
-    f.items = reset ? res.items : f.items.concat(res.items);
-    f.continuation = res.continuation;
-    f.signedIn = res.signedIn;
+    const page = await feedPage({ reset, freshBatch: false });
+    f.items = reset ? page : f.items.concat(page);
     f.loaded = true;
-    debug.log('app', `home feed page: +${res.items.length} videos (total ${f.items.length}), more: ${Boolean(res.continuation)}, signedIn: ${res.signedIn}`, res.shape);
     renderFeedList();
     const notice = $('#feed-notice');
-    if (!res.signedIn) {
+    if (f.ytDown) {
       notice.hidden = false;
       notice.className = 'notice warn';
       notice.replaceChildren(
-        el('span', {}, store.settings.cookies ? 'YouTube is treating your cookies as signed out. Export a fresh set to get your recommendations back.' : 'Add your YouTube cookies in the TV tab to see your own recommendations here. Search works without them.'),
+        el('span', {}, `Showing MyTube's own picks only: ${f.ytDown}.`),
         el('button', { class: 'btn ghost small', onclick: () => showView('tv') }, 'Open TV tab')
       );
     } else {
       notice.hidden = true;
     }
     if (f.items.length === 0 && reset) {
-      $('#feed-list').replaceChildren(el('p', { class: 'empty' }, res.signedIn ? 'YouTube returned an empty feed.' : 'Nothing to show without your account. Use Search, or add cookies in the TV tab.'));
+      $('#feed-list').replaceChildren(el('p', { class: 'empty' }, f.ytDown ? 'Nothing to recommend yet: MyTube builds its own picks from what you play and queue here. Use Search to get started.' : 'YouTube returned an empty feed.'));
     }
   } finally {
     f.loading = false;
     $('#feed-loading').hidden = true;
   }
-  fillIfShort('feed-sentinel', 'home', () => Boolean(f.continuation), () => loadFeed(false));
+  fillIfShort('feed-sentinel', 'home', feedHasMore, () => loadFeed(false));
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +700,7 @@ function tvQueueIsOurs() {
 }
 
 async function playNow(v) {
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null); // a signal for MyTube's own picks
   const t0 = performance.now();
   debug.log('app', `playNow ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned });
   store.rememberVideo(v);
@@ -630,6 +729,7 @@ function prewarm() {
 }
 
 async function playNext(v) {
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null); // a signal for MyTube's own picks
   debug.log('app', `playNext ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
@@ -641,6 +741,7 @@ async function playNext(v) {
 }
 
 async function addToQueue(v) {
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null); // a signal for MyTube's own picks
   debug.log('app', `addToQueue ${v.videoId}`, { title: v.title, connected: remote.connected, owned: ui.owned, tvVideo: remote.player.videoId });
   store.rememberVideo(v);
   if (remote.player.videoId === v.videoId) throw new Error('That video is already playing');
@@ -1919,7 +2020,10 @@ async function loadSubs(reset) {
     if (SUBS.channel) res = await apiChannelVideos(SUBS.channel.channelId, reset ? null : SUBS.continuation);
     else {
       res = await apiSubscriptions(reset ? null : SUBS.continuation);
-      if (reset) SUBS.channels = res.channels;
+      if (reset) {
+        SUBS.channels = res.channels;
+        store.rememberSubs(res.channels);
+      }
     }
     SUBS.items = SUBS.items.concat(res.items);
     SUBS.continuation = res.continuation;
@@ -1989,6 +2093,8 @@ remote.addEventListener('player', () => {
     ui.descOpen = false;
     resetAdRun(pl.videoId);
     if (pl.videoId) {
+      const known = store.video(pl.videoId);
+      store.recordPlay(pl.videoId, known && known.channelId ? known.channelId : null);
       syncCurrentFromTv();
       loadWatch(pl.videoId).catch(showError);
       if (ADS().sponsorBlock) loadSponsorSegments(pl.videoId).catch(showError);
@@ -2148,6 +2254,16 @@ function renderTvView() {
         el('button', { class: 'btn primary', onclick: guard(async () => { s.cookies = ta.value.trim(); store.saveSettings(); ui.feed.loaded = false; await loadFeed(true); toast(ui.feed.signedIn ? 'Signed in — feed loaded' : 'Saved, but YouTube still sees you as signed out', { error: !ui.feed.signedIn }); renderTvView(); }) }, 'Save & test'),
         el('button', { class: 'btn ghost', onclick: () => { ta.value = ''; s.cookies = ''; store.saveSettings(); ui.feed.loaded = false; renderTvView(); } }, 'Remove')
       )
+    )
+  );
+
+  // --- Home feed mix
+  const feedMix = el('select', { onchange: (e) => { s.feedMix = Number(e.target.value); store.saveSettings(); ui.feed.loaded = false; debug.log('app', `setting feedMix = ${s.feedMix}`); } }, ...[0, 10, 20, 30, 50, 70, 100].map((n) => el('option', { value: n, selected: s.feedMix === n }, n === 0 ? 'YouTube only' : n === 100 ? 'MyTube only' : `${n} % MyTube`)));
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, 'Home feed'),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Mix', el('small', {}, "How much of Home is MyTube's own picks (built from what you play and queue here, your most-watched channels, and a few explore picks) next to YouTube's recommendations. When the YouTube login fails, Home switches to MyTube picks only.")), feedMix),
+      el('p', {}, `Built from ${store.taste.plays.length} played or queued videos and ${store.taste.subs.length} subscribed channels remembered on this phone.`)
     )
   );
 
