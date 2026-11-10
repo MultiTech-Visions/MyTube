@@ -51,8 +51,11 @@ export async function api(path, { method = 'GET', body, signal, keepalive = fals
       log('error', `${method} ${path.split('?')[0]} → HTTP ${res.status} without an error body`);
       throw new ApiError(res.status, 'UNKNOWN', `HTTP ${res.status} without an error body`, json);
     }
-    log('api', `${method} ${path.split('?')[0]} → ${res.status} ${json.error.code}: ${json.error.message}`, json.error.detail);
-    throw new ApiError(res.status, json.error.code, json.error.message, json.error.detail);
+    const detail = typeof json.error.detail === 'string' ? json.error.detail.replace(/\s+/g, ' ').slice(0, 200) : json.error.detail;
+    log('api', `${method} ${path.split('?')[0]} → ${res.status} ${json.error.code}: ${json.error.message}`, detail);
+    const err = new ApiError(res.status, json.error.code, json.error.message, json.error.detail);
+    err.logged = true; // showError() does not log it a second time
+    throw err;
   }
   return json;
 }

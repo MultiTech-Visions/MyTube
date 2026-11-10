@@ -14,7 +14,7 @@
  *   'error'    a recoverable error happened    { error }
  */
 import { api, ApiError } from './api.js';
-import { log } from './debug.js';
+import { log, eventData } from './debug.js';
 
 const QUEUE_COMMANDS = new Set(['addVideo', 'insertVideo', 'removeVideo', 'setPlaylist', 'stopVideo']);
 
@@ -460,7 +460,7 @@ export class Remote extends EventTarget {
   _handleEvent(ev) {
     if (this.session && typeof ev.id === 'number' && ev.id > this.session.aid) this.session.aid = ev.id;
     const p = ev.payload && typeof ev.payload === 'object' ? ev.payload : {};
-    if (ev.name !== 'noop') log('event', `${ev.name} #${ev.id}`, ev.payload);
+    if (ev.name !== 'noop') log('event', `${ev.name} #${ev.id}`, eventData(ev.name, ev.payload));
     const pl = this.player;
     switch (ev.name) {
       case 'noop':

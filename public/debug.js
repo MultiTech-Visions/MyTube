@@ -49,11 +49,41 @@ function flush() {
 export function log(kind, msg, data) {
   const entry = { t: Date.now(), k: kind, m: msg };
   if (data !== undefined) entry.d = redact(data);
-  entries.push(entry);
+  // A repeat of the previous entry (same kind, same text apart from numbers, same data) is
+  // counted on that entry instead of stored again: "×6 until 13:25:02".
+  const last = entries[entries.length - 1];
+  if (last && last.k === kind && groupKey(last) === groupKey(entry)) {
+    last.n = (last.n === undefined ? 1 : last.n) + 1;
+    last.t2 = entry.t;
+  } else {
+    entries.push(entry);
+  }
   if (entries.length > MAX) entries.splice(0, entries.length - MAX);
   dirty = true;
   if (!flushTimer) flushTimer = setTimeout(flush, 500);
   if (kind === 'error') console.error(`[mytube] ${msg}`, data === undefined ? '' : data);
+}
+
+function groupKey(entry) {
+  return `${entry.m.replace(/\d+/g, '#')}|${entry.d === undefined ? '' : JSON.stringify(entry.d)}`;
+}
+
+/**
+ * What to keep of a TV event's payload. A few events repeat a large, unchanging blob with every
+ * video (the device list, every audio track, the caption style); those are cut to what matters.
+ */
+export function eventData(name, payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (name === 'loungeStatus') {
+    const devices = JSON.parse(payload.devices);
+    return { queueId: payload.queueId, devices: devices.map((d) => `${d.name} (${d.clientName}, ${d.type})`) };
+  }
+  if (name === 'onAudioTrackListChanged') return { audioTracks: `${JSON.parse(payload.audioTracks).length} tracks` };
+  if (name === 'onSubtitlesTrackChanged') {
+    const { style, ...rest } = payload;
+    return rest;
+  }
+  return payload;
 }
 
 export function count() {
@@ -70,7 +100,8 @@ function fmt(entry) {
   const d = new Date(entry.t);
   const time = `${d.toISOString().slice(11, 23)}`;
   const data = entry.d === undefined ? '' : ' ' + (typeof entry.d === 'string' ? entry.d : JSON.stringify(entry.d));
-  return `${time} ${entry.k.padEnd(6)} ${entry.m}${data}`;
+  const repeat = entry.n === undefined ? '' : ` ×${entry.n} until ${new Date(entry.t2).toISOString().slice(11, 23)}`;
+  return `${time} ${entry.k.padEnd(6)} ${entry.m}${data}${repeat}`;
 }
 
 /** The log as text, newest last, with a header describing the device. */
