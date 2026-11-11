@@ -4,7 +4,7 @@
  * erase them. Corrupt JSON throws on purpose; only a missing key gets its
  * initial value.
  */
-const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos', taste: 'mytube.taste' };
+const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos', taste: 'mytube.taste', profiles: 'mytube.profiles' };
 
 function load(key, initial) {
   const raw = localStorage.getItem(key);
@@ -51,6 +51,31 @@ export const AD_DEFAULTS = {
  * channel contains one are dropped.
  */
 const TASTE_DEFAULTS = { plays: [], subs: [], names: {}, avatars: {}, excluded: [], pinned: [], blocked: [], keywords: [], blockedWords: [] };
+const FIRST_MIX = 30; // % of Home that is MyTube's own picks, for a profile that has no setting yet
+const newTaste = () => ({ ...JSON.parse(JSON.stringify(TASTE_DEFAULTS)), mix: FIRST_MIX, useSubs: true });
+/** The main profile keeps the original key, so existing data stays where it is. */
+const tasteKey = (id) => (id === 'main' ? KEYS.taste : `${KEYS.taste}.${id}`);
+/** Loads one profile's taste; lists added in later versions are added (empty) once. */
+function loadTaste(id, firstMix) {
+  const taste = load(tasteKey(id), newTaste());
+  let changed = false;
+  for (const [k, v] of Object.entries(TASTE_DEFAULTS)) {
+    if (!(k in taste)) {
+      taste[k] = Array.isArray(v) ? [] : {};
+      changed = true;
+    }
+  }
+  if (!('mix' in taste)) {
+    taste.mix = firstMix;
+    changed = true;
+  }
+  if (!('useSubs' in taste)) {
+    taste.useSubs = true; // draw picks from subscribed channels, as before this setting existed
+    changed = true;
+  }
+  if (changed) save(tasteKey(id), taste);
+  return taste;
+}
 
 export const store = {
   /** Stable id for this phone; the TV uses it to recognise the same remote across reconnects. */
@@ -61,7 +86,6 @@ export const store = {
     cookies: '',
     screen: null, // { screenId, loungeToken, name, expiration }
     autoConnect: true,
-    feedMix: 30, // % of Home that is MyTube's own picks while the YouTube login works
     ads: null, // filled in below
   }),
   saveSettings() {
@@ -96,13 +120,56 @@ export const store = {
    * What MyTube's own recommendations are built from: videos that played or were queued
    * (newest first) and the subscription list as last seen while the login worked.
    */
-  taste: load(KEYS.taste, JSON.parse(JSON.stringify(TASTE_DEFAULTS))),
+  taste: null, // the active profile's taste; loaded below, once settings exist
+  /**
+   * Profiles for MyTube's own picks: each has its own taste (keywords, blocks, pins, the videos
+   * picks start from, the mix). Plays are recorded into the active one only.
+   */
+  profiles: load(KEYS.profiles, { active: 'main', list: [{ id: 'main', name: 'Main' }] }),
+  saveProfiles() {
+    save(KEYS.profiles, this.profiles);
+  },
+  profileName() {
+    return this.profiles.list.find((p) => p.id === this.profiles.active).name;
+  },
+  switchProfile(id) {
+    if (!this.profiles.list.some((p) => p.id === id)) throw new Error(`No profile ${id}`);
+    this.saveTaste();
+    this.profiles.active = id;
+    this.saveProfiles();
+    this.taste = loadTaste(id, FIRST_MIX);
+  },
+  /** copy: start from the active profile's lists instead of empty ones (known channels are always carried over). */
+  createProfile(name, copy) {
+    if (this.profiles.list.some((p) => p.name.toLowerCase() === name.toLowerCase())) throw new Error(`There is already a profile called "${name}"`);
+    const id = `p${Date.now().toString(36)}`;
+    const cur = this.taste;
+    const taste = copy ? JSON.parse(JSON.stringify(cur)) : { ...newTaste(), subs: cur.subs.slice(), names: { ...cur.names }, avatars: { ...cur.avatars }, mix: cur.mix };
+    save(tasteKey(id), taste);
+    this.profiles.list.push({ id, name });
+    this.switchProfile(id);
+    return id;
+  },
+  renameProfile(id, name) {
+    if (this.profiles.list.some((p) => p.id !== id && p.name.toLowerCase() === name.toLowerCase())) throw new Error(`There is already a profile called "${name}"`);
+    this.profiles.list.find((p) => p.id === id).name = name;
+    this.saveProfiles();
+  },
+  deleteProfile(id) {
+    if (this.profiles.list.length === 1) throw new Error('This is the only profile; it cannot be deleted');
+    if (id === 'main') throw new Error('The Main profile cannot be deleted (reset it instead)');
+    if (this.profiles.active === id) this.switchProfile('main');
+    this.profiles.list = this.profiles.list.filter((p) => p.id !== id);
+    this.saveProfiles();
+    localStorage.removeItem(tasteKey(id));
+  },
   resetTaste() {
-    this.taste = JSON.parse(JSON.stringify(TASTE_DEFAULTS));
+    const keep = this.taste.mix;
+    this.taste = { ...newTaste(), mix: keep, useSubs: this.taste.useSubs };
     this.saveTaste();
   },
   saveTaste() {
-    save(KEYS.taste, this.taste);
+    save(tasteKey(this.profiles.active), this.taste);
   },
   /** channelId / channelName may be null when the TV started a video this phone knows nothing about. */
   recordPlay(videoId, channelId, channelName, channelAvatar) {
@@ -117,12 +184,17 @@ export const store = {
     this.saveTaste();
   },
   rememberSubs(channels) {
-    this.taste.subs = channels.map((c) => c.channelId);
-    for (const c of channels) {
-      if (c.title) this.taste.names[c.channelId] = c.title;
-      if (c.avatar) this.taste.avatars[c.channelId] = c.avatar;
-    }
+    // The subscription list is a fact about the account, not a preference: every profile gets it.
     this.saveTaste();
+    for (const p of this.profiles.list) {
+      const taste = p.id === this.profiles.active ? this.taste : loadTaste(p.id, FIRST_MIX);
+      taste.subs = channels.map((c) => c.channelId);
+      for (const c of channels) {
+        if (c.title) taste.names[c.channelId] = c.title;
+        if (c.avatar) taste.avatars[c.channelId] = c.avatar;
+      }
+      save(tasteKey(p.id), taste);
+    }
   },
 
   /** Videos removed from recommendations; filtered out of Home even if YouTube sends them again. */
@@ -141,25 +213,15 @@ export const store = {
   },
 
   clearAll() {
-    for (const k of Object.values(KEYS)) localStorage.removeItem(k);
+    for (const k of Object.keys(localStorage)) if (k.startsWith('mytube.')) localStorage.removeItem(k);
   },
 };
 
-// Taste saved before the Tune tab existed gets the new (empty) lists once.
-{
-  let changed = false;
-  for (const [k, v] of Object.entries(TASTE_DEFAULTS)) {
-    if (!(k in store.taste)) {
-      store.taste[k] = Array.isArray(v) ? [] : {};
-      changed = true;
-    }
-  }
-  if (changed) store.saveTaste();
-}
-
-// Added later: existing saved settings get the default once.
-if (!('feedMix' in store.settings)) {
-  store.settings.feedMix = 30;
+// The mix used to be one setting for everything; it now belongs to each profile. The first load
+// hands the saved value to the profile and drops the old setting.
+store.taste = loadTaste(store.profiles.active, 'feedMix' in store.settings ? store.settings.feedMix : FIRST_MIX);
+if ('feedMix' in store.settings) {
+  delete store.settings.feedMix;
   store.saveSettings();
 }
 
