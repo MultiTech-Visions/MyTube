@@ -388,3 +388,6 @@ body.has-mini .undo { bottom: calc(var(--nav-h) + var(--mini-h) + 12px + var(--s
 
 .profile-chips { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0; }
 #feed-list > .profile-chips { padding: 8px 16px; }
+
+.btn.action.hearted .ico svg, .pill.on#np-heart .ico svg { fill: #ff4d6d; }
+.pill.on#np-heart { background: var(--surface-2); color: var(--text); }

@@ -45,12 +45,13 @@ export const AD_DEFAULTS = {
 
 /**
  * Everything MyTube's own picks are tailored by (Tune tab).
- * plays: [{ videoId, channelId|null, at }] newest first; subs/pinned/blocked: channel ids;
+ * hearts: [{ videoId, channelId|null, at }] videos you hearted for this profile, the strongest
+ * signal; plays: [{ videoId, channelId|null, at }] newest first; subs/pinned/blocked: channel ids;
  * names / avatars: channelId -> name / icon URL; excluded: videos you marked "don't use"
  * ([{ videoId, channelId|null, at }]): never a starting point, never shown as a pick; keywords: searched for picks; blockedWords: picks whose title or
  * channel contains one are dropped.
  */
-const TASTE_DEFAULTS = { plays: [], subs: [], names: {}, avatars: {}, excluded: [], pinned: [], blocked: [], keywords: [], blockedWords: [] };
+const TASTE_DEFAULTS = { hearts: [], plays: [], subs: [], names: {}, avatars: {}, excluded: [], pinned: [], blocked: [], keywords: [], blockedWords: [] };
 const FIRST_MIX = 30; // % of Home that is MyTube's own picks, for a profile that has no setting yet
 const newTaste = () => ({ ...JSON.parse(JSON.stringify(TASTE_DEFAULTS)), mix: FIRST_MIX, useSubs: true });
 /** The main profile keeps the original key, so existing data stays where it is. */
@@ -162,6 +163,22 @@ export const store = {
     this.profiles.list = this.profiles.list.filter((p) => p.id !== id);
     this.saveProfiles();
     localStorage.removeItem(tasteKey(id));
+  },
+  /** A profile's taste, whether or not it is the active one. */
+  tasteOf(profileId) {
+    return profileId === this.profiles.active ? this.taste : loadTaste(profileId, FIRST_MIX);
+  },
+  /** Hearts (or un-hearts) a video for one profile. A hearted video leaves that profile's "don't use" list. */
+  setHeart(profileId, video, on) {
+    const taste = this.tasteOf(profileId);
+    taste.hearts = taste.hearts.filter((h) => h.videoId !== video.videoId);
+    if (on) {
+      taste.hearts.unshift({ videoId: video.videoId, channelId: video.channelId ? video.channelId : null, at: Date.now() });
+      taste.excluded = taste.excluded.filter((x) => x.videoId !== video.videoId);
+      if (video.channelId && video.channel) taste.names[video.channelId] = video.channel;
+      if (video.channelId && video.channelAvatar) taste.avatars[video.channelId] = video.channelAvatar;
+    }
+    save(tasteKey(profileId), taste);
   },
   resetTaste() {
     const keep = this.taste.mix;
