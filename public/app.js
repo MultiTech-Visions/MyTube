@@ -178,7 +178,7 @@ function renderFeedList() {
 // ---------------------------------------------------------------------------
 // Video cards
 // ---------------------------------------------------------------------------
-const PICK_LABEL = { related: 'MyTube: like what you watched', channel: 'MyTube: channel you watch', keyword: 'MyTube: your keywords', explore: 'MyTube: explore' };
+const PICK_LABEL = { hearted: 'MyTube: like a video you hearted ♥', related: 'MyTube: like what you watched', channel: 'MyTube: channel you watch', keyword: 'MyTube: your keywords', explore: 'MyTube: explore' };
 function card(v, { compact = false } = {}) {
   const sub = joinMeta(v.channel, v.views, v.published, v.pick ? PICK_LABEL[v.pick] : '');
   const node = el(
@@ -276,15 +276,18 @@ function mixSeeds() {
   const T = store.taste;
   const blocked = new Set(T.blocked);
   const plays = T.plays.filter((p) => !blocked.has(p.channelId));
+  // Hearted videos lead: up to three of them per rebuild, and then fewer ordinary plays.
+  const hearts = shuffled(T.hearts).slice(0, 3).map((h) => h.videoId);
   let videos = plays.length ? [plays[0].videoId, ...shuffled(plays.slice(1, 15)).slice(0, 2).map((p) => p.videoId)] : [];
+  videos = videos.filter((id) => !hearts.includes(id)).slice(0, hearts.length ? 1 : 3);
   const excluded = new Set(T.excluded.map((x) => x.videoId));
-  if (videos.length === 0 && T.plays.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)].filter((id) => !excluded.has(id))).slice(0, 3);
+  if (videos.length === 0 && T.plays.length === 0 && hearts.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)].filter((id) => !excluded.has(id))).slice(0, 3);
   const channels = shuffled(T.pinned).slice(0, 2);
   const top = channelStats().filter((c) => c.plays > 0 && !blocked.has(c.channelId) && !channels.includes(c.channelId)).slice(0, 8).map((c) => c.channelId);
   channels.push(...shuffled(top).slice(0, channels.length ? 1 : 2));
   const sub = shuffled(T.subs.filter((id) => !channels.includes(id) && !blocked.has(id)))[0];
   if (T.useSubs && sub && channels.length < 4) channels.push(sub);
-  return { videos: [...new Set(videos)], channels, keywords: shuffled(T.keywords).slice(0, 2) };
+  return { hearts, videos: [...new Set(videos)], channels, keywords: shuffled(T.keywords).slice(0, 2) };
 }
 /** Every channel this phone knows, most played first: [{ channelId, name, plays, subscribed, pinned, blocked }]. */
 function channelStats() {
@@ -307,13 +310,13 @@ function pickAllowed(v) {
 /** `shown`: the videos already on Home (empty on a fresh load, so a rebuild may show them again). */
 async function refillMix(shown) {
   const seeds = mixSeeds();
-  if (seeds.videos.length + seeds.channels.length + seeds.keywords.length === 0) {
+  if (seeds.hearts.length + seeds.videos.length + seeds.channels.length + seeds.keywords.length === 0) {
     MIX.dry = true;
     debug.log('app', 'own picks: nothing watched or queued on this phone yet and no keywords, so no seeds');
     return;
   }
   const res = await apiMix(seeds);
-  const known = new Set([...shown.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.hidden, ...store.taste.plays.map((p) => p.videoId), ...Q.items.map((it) => it.videoId)]);
+  const known = new Set([...shown.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.hidden, ...store.taste.plays.map((p) => p.videoId), ...store.taste.hearts.map((h) => h.videoId), ...Q.items.map((it) => it.videoId)]);
   const fresh = res.items.filter((v) => !known.has(v.videoId) && pickAllowed(v));
   MIX.pool.push(...fresh);
   if (fresh.length === 0) MIX.dry = true;
@@ -477,6 +480,11 @@ function openSheet(v) {
   const fromHome = ui.view === 'home';
   const opts = (v.feedback || []).map((f) => el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, f)) }, el('span', { class: 'ico', html: icon('hide') }), f.label));
   if (fromHome) opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, null)) }, el('span', { class: 'ico', html: icon('hide') }), 'Hide from my feed'));
+  for (const pr of store.profiles.list) {
+    const on = isHearted(pr.id, v.videoId);
+    const many = store.profiles.list.length > 1;
+    opts.push(el('button', { class: `btn action small-action${on ? ' hearted' : ''}`, type: 'button', onclick: guard(() => { toggleHeart(pr.id, v); closeSheet(); }) }, el('span', { class: 'ico', html: icon('heart') }), on ? `Hearted${many ? ` for ${pr.name}` : ''} (tap to remove)` : `Heart${many ? ` for ${pr.name}` : ' for MyTube picks'}`));
+  }
   if (v.channelId) {
     const blockedNow = store.taste.blocked.includes(v.channelId);
     opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => { setChannelFlag(v.channelId, v.channel, 'blocked', !blockedNow); closeSheet(); toast(blockedNow ? `${v.channel} is allowed in MyTube picks again` : `No more MyTube picks from ${v.channel}`); }) }, el('span', { class: 'ico', html: icon('hide') }), blockedNow ? 'Unblock channel in MyTube picks' : 'Block channel in MyTube picks'));
@@ -1026,6 +1034,13 @@ async function setRating(which) {
   toast(res.rating === 'LIKE' ? 'Liked' : res.rating === 'DISLIKE' ? 'Disliked' : 'Rating removed');
 }
 $('#np-like').addEventListener('click', guard(() => setRating('like')));
+// Heart the playing video for the active profile (other profiles: tap the video in a list).
+$('#np-heart').addEventListener('click', guard(() => {
+  const videoId = remote.player.videoId;
+  if (!videoId) throw new Error('Nothing is playing');
+  const known = store.video(videoId);
+  toggleHeart(store.profiles.active, known ? known : { videoId });
+}));
 $('#np-dislike').addEventListener('click', guard(() => setRating('dislike')));
 $('#np-save').addEventListener('click', guard(() => {
   const vid = remote.player.videoId;
@@ -1037,6 +1052,10 @@ $('#np-save').addEventListener('click', guard(() => {
 function renderActions() {
   const vid = remote.player.videoId;
   const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
+  const heart = $('#np-heart');
+  heart.classList.toggle('on', Boolean(remote.player.videoId) && isHearted(store.profiles.active, remote.player.videoId));
+  heart.disabled = !remote.player.videoId;
+  $('#np-heart-label').textContent = store.profiles.list.length > 1 ? store.profileName() : '';
   const like = $('#np-like'), dislike = $('#np-dislike'), save = $('#np-save');
   like.disabled = dislike.disabled = save.disabled = !data;
   like.classList.toggle('on', Boolean(data && data.rating === 'LIKE'));
@@ -2399,6 +2418,17 @@ function wordPanel(listName, title, hint, placeholder) {
       : el('p', {}, 'None yet.')
   );
 }
+const isHearted = (profileId, videoId) => store.tasteOf(profileId).hearts.some((h) => h.videoId === videoId);
+/** Hearts or un-hearts a video for a profile: the strongest signal for that profile's picks. */
+function toggleHeart(profileId, v) {
+  const on = !isHearted(profileId, v.videoId);
+  store.setHeart(profileId, v, on);
+  const name = store.profiles.list.find((p) => p.id === profileId).name;
+  debug.log('app', `tune: ${on ? 'hearted' : 'un-hearted'} ${v.videoId} for profile "${name}"`);
+  toast(on ? `Hearted for ${name}: more like this will show up` : `Heart removed for ${name}`);
+  if (ui.npOpen) renderNowPlaying();
+  if (ui.view === 'tune') renderTuneView();
+}
 /** Switches which profile MyTube's own picks come from and rebuilds Home from it. */
 function useProfile(id) {
   if (id === store.profiles.active) return;
@@ -2477,6 +2507,7 @@ function setExcluded(entry, on) {
   const T = store.taste;
   T.excluded = T.excluded.filter((x) => x.videoId !== entry.videoId);
   T.plays = T.plays.filter((x) => x.videoId !== entry.videoId);
+  if (on) T.hearts = T.hearts.filter((x) => x.videoId !== entry.videoId); // cannot be both
   if (on) T.excluded.unshift({ videoId: entry.videoId, channelId: entry.channelId, at: Date.now() });
   else T.plays.unshift({ videoId: entry.videoId, channelId: entry.channelId, at: Date.now() });
   store.saveTaste();
@@ -2517,7 +2548,7 @@ function renderTuneView() {
       el('h3', {}, `Home feed mix (${store.profileName()})`),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Share of MyTube picks', el('small', {}, "Next to YouTube's recommendations while the login works. When it fails, Home is MyTube picks only.")), feedMix),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Use my subscriptions', el('small', {}, 'Draw one subscribed channel into each rebuild. Turn off for a profile that should stay on its topics.')), el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: T.useSubs, onchange: (e) => { T.useSubs = e.target.checked; store.saveTaste(); debug.log('app', `tune: useSubs = ${T.useSubs} (${store.profileName()})`); } }), el('span'))),
-      el('p', {}, `Picks are built from ${T.plays.length} played or queued videos, ${channelStats().filter((c) => c.plays > 0).length} channels you watched, ${T.subs.length} subscriptions, ${T.pinned.length} pinned channels and ${T.keywords.length} keywords. Everything below changes what you get.`),
+      el('p', {}, `Picks are built from ${T.plays.length} played or queued videos, ${channelStats().filter((c) => c.plays > 0).length} channels you watched, ${T.hearts.length} hearted videos, ${T.subs.length} subscriptions, ${T.pinned.length} pinned channels and ${T.keywords.length} keywords. Everything below changes what you get.`),
       el('div', { class: 'row' }, el('button', { class: 'btn primary', onclick: guard(async () => { showView('home'); await loadFeed(true); }) }, 'Rebuild Home now'))
     )
   );
@@ -2543,6 +2574,17 @@ function renderTuneView() {
       el('div', { class: 'tune-group' }, `Discovered from what you watch (${rest.length})`),
       ...(rest.length ? shown.map(channelRow) : [el('p', {}, 'None yet. Channels appear here as you play and queue videos, and when the Subs tab loads.')]),
       rest.length > shown.length ? el('div', { class: 'row' }, el('button', { class: 'btn ghost small', onclick: () => { TUNE.showAllChannels = true; renderTuneView(); } }, `Show all ${rest.length}`)) : null
+    )
+  );
+
+  // --- Hearted videos: the strongest signal
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, `Hearted (${T.hearts.length})`),
+      el('p', {}, 'The strongest influence on this profile: each rebuild starts from up to three of these (more picks per video than an ordinary play, listed first, and the explore picks branch out from them). Heart a video from its sheet (tap it in any list) or with the heart on the now-playing screen.'),
+      ...(T.hearts.length
+        ? T.hearts.map((h) => videoRow(h, el('button', { class: 'chip', onclick: () => { store.setHeart(store.profiles.active, h, false); debug.log('app', `tune: un-hearted ${h.videoId}`); renderTuneView(); } }, 'Remove')))
+        : [el('p', {}, 'None yet.')])
     )
   );
 
