@@ -385,3 +385,6 @@ body.has-mini .undo { bottom: calc(var(--nav-h) + var(--mini-h) + 12px + var(--s
 .tune-day summary { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; font-size: 14px; font-weight: 500; cursor: pointer; }
 .tune-day summary span { color: var(--text-2); font-size: 12px; font-weight: 400; }
 .tune-day .tune-row:last-child { border-bottom: none; }
+
+.profile-chips { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0; }
+#feed-list > .profile-chips { padding: 8px 16px; }

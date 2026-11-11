@@ -171,6 +171,7 @@ async function moreFeed() {
 /** Feed cards plus the "Add more videos" button at the bottom. */
 function renderFeedList() {
   renderList($('#feed-list'), visibleFeed());
+  if (store.profiles.list.length > 1) $('#feed-list').prepend(profileChips());
   if (ui.feed.items.length) $('#feed-list').append(el('button', { class: 'btn ghost', style: 'margin:8px 16px 16px', onclick: guard(moreFeed) }, 'Add more videos'));
 }
 
@@ -282,7 +283,7 @@ function mixSeeds() {
   const top = channelStats().filter((c) => c.plays > 0 && !blocked.has(c.channelId) && !channels.includes(c.channelId)).slice(0, 8).map((c) => c.channelId);
   channels.push(...shuffled(top).slice(0, channels.length ? 1 : 2));
   const sub = shuffled(T.subs.filter((id) => !channels.includes(id) && !blocked.has(id)))[0];
-  if (sub && channels.length < 4) channels.push(sub);
+  if (T.useSubs && sub && channels.length < 4) channels.push(sub);
   return { videos: [...new Set(videos)], channels, keywords: shuffled(T.keywords).slice(0, 2) };
 }
 /** Every channel this phone knows, most played first: [{ channelId, name, plays, subscribed, pinned, blocked }]. */
@@ -331,7 +332,7 @@ function blend(yt, mine) {
   }
   return out;
 }
-const feedHasMore = () => Boolean(ui.feed.continuation) || ((ui.feed.ytDown || store.settings.feedMix > 0) && !MIX.dry);
+const feedHasMore = () => Boolean(ui.feed.continuation) || ((ui.feed.ytDown || store.taste.mix > 0) && !MIX.dry);
 
 /**
  * One page of Home: YouTube's feed blended with MyTube's own picks at the set
@@ -340,7 +341,7 @@ const feedHasMore = () => Boolean(ui.feed.continuation) || ((ui.feed.ytDown || s
  */
 async function feedPage({ reset, freshBatch }) {
   const f = ui.feed;
-  const pct = store.settings.feedMix;
+  const pct = store.taste.mix;
   if (reset) {
     MIX.pool = [];
     MIX.dry = false;
@@ -412,6 +413,7 @@ async function loadFeed(reset) {
     }
     if (f.items.length === 0 && reset) {
       $('#feed-list').replaceChildren(el('p', { class: 'empty' }, f.ytDown ? 'Nothing to recommend yet: MyTube builds its own picks from what you play and queue here. Use Search, or add keywords in the Tune tab.' : 'YouTube returned an empty feed.'));
+      if (store.profiles.list.length > 1) $('#feed-list').prepend(profileChips());
     }
   } finally {
     f.loading = false;
@@ -2397,6 +2399,21 @@ function wordPanel(listName, title, hint, placeholder) {
       : el('p', {}, 'None yet.')
   );
 }
+/** Switches which profile MyTube's own picks come from and rebuilds Home from it. */
+function useProfile(id) {
+  if (id === store.profiles.active) return;
+  store.switchProfile(id);
+  debug.log('app', `tune: switched to profile "${store.profileName()}"`);
+  MIX.pool = [];
+  MIX.dry = false;
+  ui.feed.loaded = false;
+  if (ui.view === 'tune') renderTuneView();
+  if (ui.view === 'home') loadFeed(true).catch(showError);
+  toast(`Profile: ${store.profileName()}`);
+}
+function profileChips() {
+  return el('div', { class: 'profile-chips' }, ...store.profiles.list.map((p) => el('button', { class: `chip${p.id === store.profiles.active ? ' active' : ''}`, onclick: guard(() => useProfile(p.id)) }, p.name)));
+}
 function channelRow(c) {
   const sub = [c.plays ? `${c.plays} played/queued` : '', c.subscribed ? 'subscribed' : ''].filter(Boolean).join(' · ');
   return el('div', { class: 'tune-row' },
@@ -2472,12 +2489,34 @@ function renderTuneView() {
   const T = store.taste;
   const panels = [];
 
-  // --- Mix
-  const feedMix = el('select', { onchange: (e) => { s.feedMix = Number(e.target.value); store.saveSettings(); ui.feed.loaded = false; debug.log('app', `setting feedMix = ${s.feedMix}`); } }, ...[0, 10, 20, 30, 50, 70, 100].map((n) => el('option', { value: n, selected: s.feedMix === n }, n === 0 ? 'YouTube only' : n === 100 ? 'MyTube only' : `${n} % MyTube`)));
+  // --- Profiles
+  const active = store.profiles.active;
+  const askName = (title, initial) => {
+    const name = prompt(title, initial);
+    if (name === null) return null;
+    if (!name.trim()) throw new Error('The name cannot be empty');
+    return name.trim().slice(0, 30);
+  };
   panels.push(
     el('div', { class: 'panel' },
-      el('h3', {}, 'Home feed mix'),
+      el('h3', {}, 'Profile'),
+      el('p', {}, 'Each profile has its own topics, blocked words, pinned and blocked channels, videos picks are based on, don\'t-use list and mix. What you play is learned by the profile that is active at the time. With more than one profile, the same switcher appears at the top of Home.'),
+      profileChips(),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn primary small', onclick: guard(() => { const name = askName('Name for the new profile', ''); if (name === null) return; const copy = confirm(`Start "${name}" as a copy of "${store.profileName()}"?\n\nOK: copy its lists.\nCancel: start empty.`); store.createProfile(name, copy); debug.log('app', `tune: created profile "${name}" (${copy ? 'copy' : 'empty'})`); MIX.pool = []; MIX.dry = false; ui.feed.loaded = false; renderTuneView(); }) }, 'New profile'),
+        el('button', { class: 'btn ghost small', onclick: guard(() => { const name = askName('New name', store.profileName()); if (name === null) return; store.renameProfile(active, name); renderTuneView(); }) }, 'Rename'),
+        el('button', { class: 'btn ghost small danger', disabled: active === 'main', onclick: guard(() => { const name = store.profileName(); if (!confirm(`Delete the profile "${name}" and everything in it?`)) return; store.deleteProfile(active); debug.log('app', `tune: deleted profile "${name}"`); MIX.pool = []; MIX.dry = false; ui.feed.loaded = false; renderTuneView(); }) }, 'Delete')
+      )
+    )
+  );
+
+  // --- Mix
+  const feedMix = el('select', { onchange: (e) => { T.mix = Number(e.target.value); store.saveTaste(); ui.feed.loaded = false; debug.log('app', `tune: mix = ${T.mix} (${store.profileName()})`); } }, ...[0, 10, 20, 30, 50, 70, 100].map((n) => el('option', { value: n, selected: T.mix === n }, n === 0 ? 'YouTube only' : n === 100 ? 'MyTube only' : `${n} % MyTube`)));
+  panels.push(
+    el('div', { class: 'panel' },
+      el('h3', {}, `Home feed mix (${store.profileName()})`),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Share of MyTube picks', el('small', {}, "Next to YouTube's recommendations while the login works. When it fails, Home is MyTube picks only.")), feedMix),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Use my subscriptions', el('small', {}, 'Draw one subscribed channel into each rebuild. Turn off for a profile that should stay on its topics.')), el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: T.useSubs, onchange: (e) => { T.useSubs = e.target.checked; store.saveTaste(); debug.log('app', `tune: useSubs = ${T.useSubs} (${store.profileName()})`); } }), el('span'))),
       el('p', {}, `Picks are built from ${T.plays.length} played or queued videos, ${channelStats().filter((c) => c.plays > 0).length} channels you watched, ${T.subs.length} subscriptions, ${T.pinned.length} pinned channels and ${T.keywords.length} keywords. Everything below changes what you get.`),
       el('div', { class: 'row' }, el('button', { class: 'btn primary', onclick: guard(async () => { showView('home'); await loadFeed(true); }) }, 'Rebuild Home now'))
     )

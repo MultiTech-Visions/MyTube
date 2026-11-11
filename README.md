@@ -65,6 +65,12 @@ queued videos that picks start from; unhide swiped-away videos; reset. It all
 lives on the phone and applies to MyTube's picks, not to YouTube's own
 recommendations.
 
+**Profiles** (top of the Tune tab): separate sets of everything above, each
+with its own topics, blocks, pins, starting videos, don't-use list, mix and
+"use my subscriptions" switch. What you play is learned by the active
+profile. With more than one profile a switcher also shows at the top of
+Home; switching rebuilds Home from that profile.
+
 **Channel pages:** every video card shows the channel's avatar left of the
 title; tap it for the channel page (banner, avatar, handle, subscribers,
 video count, description), with **Videos** (Latest / Popular / Oldest),
