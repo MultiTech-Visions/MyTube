@@ -391,3 +391,15 @@ body.has-mini .undo { bottom: calc(var(--nav-h) + var(--mini-h) + 12px + var(--s
 
 .btn.action.hearted .ico svg, .pill.on#np-heart .ico svg { fill: #ff4d6d; }
 .pill.on#np-heart { background: var(--surface-2); color: var(--text); }
+
+/* Ad overlay: Skip and Dodge are equally big targets */
+.np-ad-btns { display: flex; gap: 10px; width: 92%; }
+.np-ad-btns .btn.skip { flex: 1; min-width: 0; height: 68px; }
+.btn.skip.dodge { background: #fff; }
+/* Pull down at the top of Home to reload */
+.ptr { height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; }
+.ptr .spinner { display: none; }
+.ptr.loading .spinner { display: inline-block; }
+.ptr.ready { color: var(--text); }
+#np-tune { padding-top: 0; }
+#np-tune .pill.on { background: #ff8a80; color: #000; }
