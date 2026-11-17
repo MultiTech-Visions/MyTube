@@ -135,6 +135,7 @@ function adsFrom(body) {
   if (typeof ads.dodgeAfter !== 'number' || !Number.isFinite(ads.dodgeAfter) || ads.dodgeAfter < 0) {
     throw new HttpError(400, 'BAD_REQUEST', `ads.dodgeAfter must be a number of seconds >= 0 (got ${JSON.stringify(ads.dodgeAfter)})`);
   }
+  if (typeof ads.keepAwake !== 'boolean') throw new HttpError(400, 'BAD_REQUEST', `ads.keepAwake must be true or false (got ${JSON.stringify(ads.keepAwake)})`);
   return ads;
 }
 

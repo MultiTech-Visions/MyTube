@@ -138,6 +138,43 @@ for (const b of document.querySelectorAll('.navbtn')) b.addEventListener('click'
 $('#brand').addEventListener('click', () => showView('home'));
 $('#tvchip').addEventListener('click', () => showView('tv'));
 $('#btn-refresh').addEventListener('click', guard(() => loadFeed(true)));
+
+// Pull down at the very top of Home: reload the feed with a fresh set.
+{
+  const PULL = 80; // px of pull that triggers the reload
+  const ptr = $('#ptr');
+  const home = $('#view-home');
+  let start = null; // { x, y } of a touch that began at the top of the page
+  let pulled = 0;
+  const reset = () => { ptr.style.height = '0px'; ptr.classList.remove('ready', 'loading'); start = null; pulled = 0; };
+  home.addEventListener('touchstart', (e) => {
+    start = window.scrollY <= 0 && !ui.feed.loading && e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    pulled = 0;
+  }, { passive: true });
+  home.addEventListener('touchmove', (e) => {
+    if (!start) return;
+    const dx = e.touches[0].clientX - start.x;
+    const dy = e.touches[0].clientY - start.y;
+    // Mostly sideways is a card swipe; upward or scrolled away is ordinary scrolling.
+    if (window.scrollY > 0 || dy <= 0 || Math.abs(dx) > dy) { if (pulled) reset(); return; }
+    pulled = Math.min(dy * 0.5, 110);
+    ptr.style.height = `${pulled}px`;
+    ptr.classList.toggle('ready', pulled >= PULL * 0.5);
+    $('#ptr-text').textContent = pulled >= PULL * 0.5 ? 'Release to refresh' : 'Pull to refresh';
+  }, { passive: true });
+  home.addEventListener('touchend', () => {
+    if (!start) return;
+    const go = pulled >= PULL * 0.5;
+    if (!go) { reset(); return; }
+    start = null;
+    ptr.style.height = '48px';
+    ptr.classList.add('loading');
+    $('#ptr-text').textContent = 'Refreshing…';
+    debug.log('app', 'pull to refresh');
+    loadFeed(true).catch(showError).finally(reset);
+  });
+  home.addEventListener('touchcancel', reset);
+}
 $('#btn-more').addEventListener('click', guard(moreFeed));
 
 /** "Add more videos": about 20 more, from YouTube's feed and MyTube's own picks in the set mix. */
@@ -1049,7 +1086,53 @@ $('#np-save').addEventListener('click', guard(() => {
   return openSaveSheet({ ...data.video, duration: '' });
 }));
 
+/** The playing video with its channel, from the loaded video details or what the phone cached. */
+function playingVideo() {
+  const videoId = remote.player.videoId;
+  if (!videoId) throw new Error('Nothing is playing');
+  const details = ui.watch.videoId === videoId && ui.watch.data ? ui.watch.data.video : null;
+  const known = store.video(videoId);
+  const channelId = details && details.channelId ? details.channelId : known && known.channelId ? known.channelId : null;
+  return { videoId, channelId, channel: details ? details.channel : known ? known.channel : '', channelAvatar: details && details.channelAvatar ? details.channelAvatar : known && known.channelAvatar ? known.channelAvatar : '' };
+}
+const isExcluded = (videoId) => store.taste.excluded.some((x) => x.videoId === videoId);
+// "Don't use": the playing video stops steering this profile's picks (and is never a pick).
+$('#np-nouse').addEventListener('click', guard(() => {
+  const v = playingVideo();
+  const on = !isExcluded(v.videoId);
+  setExcluded(v, on);
+  toast(on ? "Won't be used for your picks" : 'Back in use for your picks');
+  renderActions();
+}));
+// "Block channel": blocks the playing video's channel for this profile and stops using the video too.
+$('#np-block').addEventListener('click', guard(() => {
+  const v = playingVideo();
+  if (!v.channelId) throw new Error('The channel of this video is not known yet. Wait a moment for the video details to load and try again.');
+  const on = !store.taste.blocked.includes(v.channelId);
+  if (v.channelAvatar) store.taste.avatars[v.channelId] = v.channelAvatar;
+  setChannelFlag(v.channelId, v.channel, 'blocked', on);
+  if (on && !isExcluded(v.videoId)) setExcluded(v, true);
+  toast(on ? `Blocked ${v.channel || 'this channel'}; this video won't be used either` : `${v.channel || 'Channel'} unblocked`);
+  renderActions();
+}));
+
 function renderActions() {
+  const vidNow = remote.player.videoId;
+  const nouse = $('#np-nouse'), block = $('#np-block');
+  nouse.disabled = !vidNow;
+  block.disabled = !vidNow;
+  const excludedNow = Boolean(vidNow) && isExcluded(vidNow);
+  nouse.classList.toggle('on', excludedNow);
+  $('#np-nouse-label').textContent = excludedNow ? "Not used (undo)" : "Don't use";
+  let blockedNow = false;
+  if (vidNow) {
+    const details = ui.watch.videoId === vidNow && ui.watch.data ? ui.watch.data.video : null;
+    const known = store.video(vidNow);
+    const cid = details && details.channelId ? details.channelId : known && known.channelId ? known.channelId : null;
+    blockedNow = Boolean(cid) && store.taste.blocked.includes(cid);
+  }
+  block.classList.toggle('on', blockedNow);
+  $('#np-block-label').textContent = blockedNow ? 'Channel blocked (undo)' : 'Block channel';
   const vid = remote.player.videoId;
   const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
   const heart = $('#np-heart');
@@ -2334,6 +2417,7 @@ function renderTvView() {
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Dodge after', el('small', {}, 'How long the ad plays before the reload. Raise it if the ad comes straight back after a reload.')), dodgeAfter),
       row('dodgeExit', 'Leave the player first', 'Send stopVideo (like pressing B) before the reload. Turn off to reload in place.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then the ad just plays (or gets skipped).')), dodgeMax),
+      row('keepAwake', 'Keep the TV listening (experimental)', 'Asks the TV for its state every 3 s while a video is loaded. Meant to stop play, pause and queue taps from taking many seconds to reach the Xbox. The debug log shows "TV reacted to play after N s" either way.'),
       row('muteAds', 'Mute during ads', 'Mutes the TV on ad start and unmutes when the ad ends.'),
       row('sponsorBlock', 'Skip sponsor segments (SponsorBlock)', 'Seeks past community-marked segments. Purple marks on the progress bar.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'SponsorBlock categories'),
@@ -2513,7 +2597,7 @@ function setExcluded(entry, on) {
   store.saveTaste();
   debug.log('app', `tune: video ${entry.videoId} ${on ? "moved to don't use" : 'back in use'}`);
   dropDisallowedPicks();
-  renderTuneView();
+  if (ui.view === 'tune') renderTuneView();
 }
 function renderTuneView() {
   const s = store.settings;

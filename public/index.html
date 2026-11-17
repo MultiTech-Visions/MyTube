@@ -28,6 +28,7 @@
 
   <main id="main">
     <section class="view" id="view-home">
+      <div class="ptr" id="ptr"><span class="spinner"></span><span id="ptr-text">Pull to refresh</span></div>
       <div class="notice" id="feed-notice" hidden></div>
       <div class="list" id="feed-list"></div>
       <div class="sentinel" id="feed-sentinel"></div>
@@ -123,8 +124,10 @@
       <img id="np-thumb" alt="">
       <div class="np-ad" id="np-ad" hidden>
         <div class="np-ad-text"><b>Ad playing</b><span id="np-ad-sub"></span></div>
-        <button class="btn skip" id="np-skip">Skip Ad</button>
-        <button class="btn ghost small" id="np-dodge">Dodge: exit &amp; reload</button>
+        <div class="np-ad-btns">
+          <button class="btn skip" id="np-skip">Skip Ad</button>
+          <button class="btn skip dodge" id="np-dodge">Dodge</button>
+        </div>
         <div class="np-ad-status" id="np-ad-status"></div>
       </div>
       <div class="np-state" id="np-state"></div>
@@ -142,6 +145,10 @@
       <button class="pill" id="np-dislike" aria-label="Dislike"><span class="ico" data-icon="thumbdown"></span></button>
       <button class="pill" id="np-heart" aria-label="Heart for MyTube picks"><span class="ico" data-icon="heart"></span><span id="np-heart-label"></span></button>
       <button class="pill" id="np-save"><span class="ico" data-icon="bookmark"></span>Save</button>
+    </div>
+    <div class="np-actions" id="np-tune">
+      <button class="pill" id="np-nouse"><span class="ico" data-icon="hide"></span><span id="np-nouse-label">Don't use</span></button>
+      <button class="pill" id="np-block"><span class="ico" data-icon="hide"></span><span id="np-block-label">Block channel</span></button>
     </div>
     <div class="scrub" id="scrub">
       <div class="scrub-track" id="scrub-track"></div>

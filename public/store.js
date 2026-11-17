@@ -38,6 +38,7 @@ export const AD_DEFAULTS = {
   dodgeExit: true, // leave the player (stopVideo) before reloading, like pressing B on the Xbox
   dodgeMax: 2, // give up after this many reloads for one video
   dodgeOffset: 2, // seconds to land past the position where the ad hit (clears mid-roll cue points)
+  keepAwake: true, // ping the TV every few seconds while a video is loaded, so it picks up commands quickly
   muteAds: false, // mute the TV while an ad plays, unmute after
   sponsorBlock: false, // seek past community-marked sponsor segments (SponsorBlock)
   sponsorCategories: ['sponsor', 'selfpromo', 'interaction'], // which SponsorBlock categories to skip

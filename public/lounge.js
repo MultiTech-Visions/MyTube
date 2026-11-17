@@ -280,7 +280,7 @@ export class Remote extends EventTarget {
         if (msg.error) throw new ApiError(502, msg.error.code, msg.error.message, msg.error.detail);
         if (msg.closed) throw new ApiError(404, 'SESSION_GONE', 'The server closed the TV session');
         if (typeof msg.seq === 'number') s.cursor = msg.seq;
-        if (msg.ev) this._handleEvent(msg.ev);
+        if (msg.ev) this._handleEvent(msg.ev, msg.quiet === true);
         else if (msg.log) log('server', msg.log, msg.data);
         else if (msg.cmd) log('cmd', `${msg.cmd} ok on server (${msg.ms} ms to YouTube)`, msg.params);
         else if (msg.status) {
@@ -466,10 +466,11 @@ export class Remote extends EventTarget {
   // Events from the TV
   // ---------------------------------------------------------------------------
 
-  _handleEvent(ev) {
+  /** quiet: an answer to the server's keep-awake ping; applied, but not written to the debug log. */
+  _handleEvent(ev, quiet = false) {
     if (this.session && typeof ev.id === 'number' && ev.id > this.session.aid) this.session.aid = ev.id;
     const p = ev.payload && typeof ev.payload === 'object' ? ev.payload : {};
-    if (ev.name !== 'noop') log('event', `${ev.name} #${ev.id}`, eventData(ev.name, ev.payload));
+    if (ev.name !== 'noop' && !quiet) log('event', `${ev.name} #${ev.id}`, eventData(ev.name, ev.payload));
     const pl = this.player;
     switch (ev.name) {
       case 'noop':
