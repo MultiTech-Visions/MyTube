@@ -38,7 +38,7 @@ export const AD_DEFAULTS = {
   dodgeExit: true, // leave the player (stopVideo) before reloading, like pressing B on the Xbox
   dodgeMax: 2, // give up after this many reloads for one video
   dodgeOffset: 2, // seconds to land past the position where the ad hit (clears mid-roll cue points)
-  keepAwake: true, // ping the TV every few seconds while a video is loaded, so it picks up commands quickly
+  keepAwake: false, // experimental: ping the TV every few seconds while a video is loaded (did not make the Xbox quicker)
   muteAds: false, // mute the TV while an ad plays, unmute after
   sponsorBlock: false, // seek past community-marked sponsor segments (SponsorBlock)
   sponsorCategories: ['sponsor', 'selfpromo', 'interaction'], // which SponsorBlock categories to skip
@@ -262,4 +262,12 @@ if (store.settings.ads === null || store.settings.ads === undefined) {
     }
   }
   if (changed) store.saveSettings();
+}
+
+// Keep-awake shipped switched on for a few days; the Xbox log showed it does not help, so it is
+// switched off once on phones that got it that way. Turning it on again afterwards sticks.
+if (!store.settings.keepAwakeOffOnce) {
+  store.settings.ads.keepAwake = false;
+  store.settings.keepAwakeOffOnce = true;
+  store.saveSettings();
 }
