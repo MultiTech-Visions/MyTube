@@ -1400,6 +1400,12 @@ function activeSponsorSegments() {
   const cats = ADS().sponsorCategories;
   return sb.segments.filter((x) => cats.includes(x.category));
 }
+$('#np-mute').addEventListener('click', guard(async () => {
+  const mute = !remote.player.muted;
+  remote.player.muted = mute; // shown at once; the TV's own report confirms or corrects it
+  renderNowPlaying();
+  await remote.setMuted(mute);
+}));
 $('#np-autoplay').addEventListener('change', guard((e) => remote.setAutoplay(e.target.checked)));
 $('#np-start').addEventListener('click', guard(() => { const s = Math.max(0, Math.min(Q.currentIndex, Q.items.length - 1)); return pushQueue(s, resumeTimeFor(s)); }));
 for (const t of document.querySelectorAll('#np-tabs .tab')) {
@@ -1462,6 +1468,9 @@ function renderNowPlaying() {
   $('#np-dodge').disabled = adRun.busy || Q.currentIndex < 0;
   $('#np-ad-status').textContent = adStatusText();
   $('#np-autoplay').checked = pl.autoplayMode === 'ENABLED';
+  $('#np-mute').classList.toggle('on', pl.muted === true);
+  $('#np-mute-ico').innerHTML = icon(pl.muted === true ? 'muted' : 'volume');
+  $('#np-mute-label').textContent = pl.muted === true ? 'Muted' : 'Mute';
   $('#np-start').hidden = !(remote.connected && !vid && Q.items.length > 0);
   for (const b of ['#np-prev', '#np-next', '#np-back', '#np-fwd']) $(b).disabled = !remote.connected || !vid;
   range.disabled = !remote.connected || !vid || !(pl.duration > 0);
