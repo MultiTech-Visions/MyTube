@@ -2416,7 +2416,7 @@ function renderTvView() {
       row('dodge', 'Dodge unskippable ads by reloading', 'Your trick: reload the video at the saved position (+2 s past a mid-roll cue) and force a seek there. An ad the TV already reports as skippable is skipped instead.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Dodge after', el('small', {}, 'How long the ad plays before the reload. Raise it if the ad comes straight back after a reload.')), dodgeAfter),
       row('dodgeExit', 'Leave the player first', 'Send stopVideo (like pressing B) before the reload. Turn off to reload in place.'),
-      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then the ad just plays (or gets skipped).')), dodgeMax),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per ad break', el('small', {}, 'Then the ads of that break just play (or get skipped). The count starts over at the next break.')), dodgeMax),
       row('keepAwake', 'Keep the TV listening (experimental)', 'Off by default. Asks the TV for its state every 3 s while a video is loaded. On the Xbox it made no measurable difference. The debug log shows "TV reacted to play after N s" either way.'),
       row('muteAds', 'Mute during ads', 'Mutes the TV on ad start and unmutes when the ad ends.'),
       row('sponsorBlock', 'Skip sponsor segments (SponsorBlock)', 'Seeks past community-marked segments. Purple marks on the progress bar.'),

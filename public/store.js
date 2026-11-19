@@ -36,7 +36,7 @@ export const AD_DEFAULTS = {
   dodge: false, // once an ad has played dodgeAfter s: reload the video at the saved position, then force a seek
   dodgeAfter: 0, // seconds of ad before the auto-dodge reloads (0 = right away)
   dodgeExit: true, // leave the player (stopVideo) before reloading, like pressing B on the Xbox
-  dodgeMax: 2, // give up after this many reloads for one video
+  dodgeMax: 2, // give up after this many reloads within one ad break
   dodgeOffset: 2, // seconds to land past the position where the ad hit (clears mid-roll cue points)
   keepAwake: false, // experimental: ping the TV every few seconds while a video is loaded (did not make the Xbox quicker)
   muteAds: false, // mute the TV while an ad plays, unmute after
