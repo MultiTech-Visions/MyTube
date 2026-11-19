@@ -2407,16 +2407,18 @@ function renderTvView() {
       el('label', { class: 'toggle' }, el('input', { type: 'checkbox', checked: ads[key], onchange: (e) => { ads[key] = e.target.checked; store.saveSettings(); pushAdSettings(); debug.log('app', `setting ads.${key} = ${ads[key]}`); if (key === 'sponsorBlock' && ads[key] && remote.player.videoId) loadSponsorSegments(remote.player.videoId).catch(showError); } }), el('span'))
     );
   const dodgeAfter = el('select', { onchange: (e) => { ads.dodgeAfter = Number(e.target.value); store.saveSettings(); pushAdSettings(); debug.log('app', `setting ads.dodgeAfter = ${ads.dodgeAfter}`); } }, ...[0, 1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeAfter === n }, n === 0 ? 'Right away' : `${n} s`)));
+  const dodgeOffset = el('select', { onchange: (e) => { ads.dodgeOffset = Number(e.target.value); store.saveSettings(); pushAdSettings(); debug.log('app', `setting ads.dodgeOffset = ${ads.dodgeOffset}`); } }, ...[-10, -5, -3, -2, 0, 2].map((n) => el('option', { value: n, selected: ads.dodgeOffset === n }, n < 0 ? `${-n} s earlier` : n === 0 ? 'Exact moment' : `${n} s later`)));
   const dodgeMax = el('select', { onchange: (e) => { ads.dodgeMax = Number(e.target.value); store.saveSettings(); pushAdSettings(); } }, ...[1, 2, 3, 5].map((n) => el('option', { value: n, selected: ads.dodgeMax === n }, String(n))));
   const cats = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'preview', 'music_offtopic'];
   panels.push(
     el('div', { class: 'panel' },
       el('h3', {}, 'Ads'),
       row('autoSkip', 'Skip ads automatically', 'Sends Skip the instant the TV reports the skip button is enabled.'),
-      row('dodge', 'Dodge unskippable ads by reloading', 'Your trick: reload the video at the saved position (+2 s past a mid-roll cue) and force a seek there. An ad the TV already reports as skippable is skipped instead.'),
+      row('dodge', 'Dodge unskippable ads by reloading', 'Your trick: reload the video where the ad cut in (see "Come back at") and force a seek there. An ad the TV already reports as skippable is skipped instead.'),
       el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Dodge after', el('small', {}, 'How long the ad plays before the reload. Raise it if the ad comes straight back after a reload.')), dodgeAfter),
       row('dodgeExit', 'Leave the player first', 'Send stopVideo (like pressing B) before the reload. Turn off to reload in place.'),
-      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per video', el('small', {}, 'Then the ad just plays (or gets skipped).')), dodgeMax),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Come back at', el('small', {}, 'Where the video resumes after a dodge, relative to the moment the ad cut in. Earlier means you miss nothing; if the same ad then plays again, choose a later value.')), dodgeOffset),
+      el('div', { class: 'setting-row' }, el('div', { class: 'setting-text' }, 'Max reloads per ad break', el('small', {}, 'Then the ads of that break just play (or get skipped). The count starts over at the next break.')), dodgeMax),
       row('keepAwake', 'Keep the TV listening (experimental)', 'Off by default. Asks the TV for its state every 3 s while a video is loaded. On the Xbox it made no measurable difference. The debug log shows "TV reacted to play after N s" either way.'),
       row('muteAds', 'Mute during ads', 'Mutes the TV on ad start and unmutes when the ad ends.'),
       row('sponsorBlock', 'Skip sponsor segments (SponsorBlock)', 'Seeks past community-marked segments. Purple marks on the progress bar.'),
