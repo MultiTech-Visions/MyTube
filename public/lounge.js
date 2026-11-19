@@ -160,6 +160,7 @@ export class Remote extends EventTarget {
     this.ad = this._emptyAd();
     this.tvQueue = { listId: null, videoIds: [], currentIndex: -1 };
     for (const ev of result.events) this._handleEvent(ev);
+    for (const w of result.watched) this._emit('watched', w);
     this._setStatus('connected');
     this._emit('player');
     this._loopId += 1;
@@ -281,6 +282,7 @@ export class Remote extends EventTarget {
         if (msg.closed) throw new ApiError(404, 'SESSION_GONE', 'The server closed the TV session');
         if (typeof msg.seq === 'number') s.cursor = msg.seq;
         if (msg.ev) this._handleEvent(msg.ev, msg.quiet === true);
+        else if (msg.watched) this._emit('watched', msg.watched);
         else if (msg.log) log('server', msg.log, msg.data);
         else if (msg.cmd) log('cmd', `${msg.cmd} ok on server (${msg.ms} ms to YouTube)`, msg.params);
         else if (msg.status) {

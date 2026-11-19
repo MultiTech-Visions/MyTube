@@ -46,13 +46,15 @@ export const AD_DEFAULTS = {
 
 /**
  * Everything MyTube's own picks are tailored by (Tune tab).
+ * hideCounts: channelId -> how many of its videos you hid (5 blocks the channel);
+ * plays may also carry watched / duration (seconds), the furthest the TV got in the video;
  * hearts: [{ videoId, channelId|null, at }] videos you hearted for this profile, the strongest
  * signal; plays: [{ videoId, channelId|null, at }] newest first; subs/pinned/blocked: channel ids;
  * names / avatars: channelId -> name / icon URL; excluded: videos you marked "don't use"
  * ([{ videoId, channelId|null, at }]): never a starting point, never shown as a pick; keywords: searched for picks; blockedWords: picks whose title or
  * channel contains one are dropped.
  */
-const TASTE_DEFAULTS = { hearts: [], plays: [], subs: [], names: {}, avatars: {}, excluded: [], pinned: [], blocked: [], keywords: [], blockedWords: [] };
+const TASTE_DEFAULTS = { hideCounts: {}, hearts: [], plays: [], subs: [], names: {}, avatars: {}, excluded: [], pinned: [], blocked: [], keywords: [], blockedWords: [] };
 const FIRST_MIX = 30; // % of Home that is MyTube's own picks, for a profile that has no setting yet
 const newTaste = () => ({ ...JSON.parse(JSON.stringify(TASTE_DEFAULTS)), mix: FIRST_MIX, useSubs: true });
 /** The main profile keeps the original key, so existing data stays where it is. */
@@ -196,9 +198,18 @@ export const store = {
     const before = this.taste.plays.find((p) => p.videoId === videoId);
     const plays = this.taste.plays.filter((p) => p.videoId !== videoId);
     // A later report without the channel must not erase a channel learned earlier.
-    plays.unshift({ videoId, channelId: channelId || (before ? before.channelId : null), at: Date.now() });
+    plays.unshift({ ...(before ? before : {}), videoId, channelId: channelId || (before ? before.channelId : null), at: Date.now() });
     this.taste.plays = plays.slice(0, 150);
     if (channelId && channelName) this.taste.names[channelId] = channelName;
+    this.saveTaste();
+  },
+  /** How far the TV got in a video (from the server). Only ever raises the stored value. */
+  noteWatched(videoId, seconds, duration) {
+    const play = this.taste.plays.find((p) => p.videoId === videoId);
+    if (!play) return;
+    if (typeof play.watched === 'number' && play.watched >= seconds) return;
+    play.watched = seconds;
+    play.duration = duration;
     this.saveTaste();
   },
   rememberSubs(channels) {
