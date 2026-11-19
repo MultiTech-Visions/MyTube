@@ -37,7 +37,7 @@ export const AD_DEFAULTS = {
   dodgeAfter: 0, // seconds of ad before the auto-dodge reloads (0 = right away)
   dodgeExit: true, // leave the player (stopVideo) before reloading, like pressing B on the Xbox
   dodgeMax: 2, // give up after this many reloads within one ad break
-  dodgeOffset: 2, // seconds to land past the position where the ad hit (clears mid-roll cue points)
+  dodgeOffset: -2, // where to come back relative to the moment the ad cut in: negative = that many seconds earlier
   keepAwake: false, // experimental: ping the TV every few seconds while a video is loaded (did not make the Xbox quicker)
   muteAds: false, // mute the TV while an ad plays, unmute after
   sponsorBlock: false, // seek past community-marked sponsor segments (SponsorBlock)
@@ -269,5 +269,13 @@ if (store.settings.ads === null || store.settings.ads === undefined) {
 if (!store.settings.keepAwakeOffOnce) {
   store.settings.ads.keepAwake = false;
   store.settings.keepAwakeOffOnce = true;
+  store.saveSettings();
+}
+
+// The return position used to be 2 s PAST the ad's cut-in, which could skip a moment of the video.
+// It is moved once to 2 s BEFORE it; a value chosen afterwards in the Ads settings sticks.
+if (!store.settings.dodgeBackOnce) {
+  store.settings.ads.dodgeOffset = -2;
+  store.settings.dodgeBackOnce = true;
   store.saveSettings();
 }
