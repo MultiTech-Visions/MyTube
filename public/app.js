@@ -312,7 +312,8 @@ function shuffled(list) {
 function mixSeeds() {
   const T = store.taste;
   const blocked = new Set(T.blocked);
-  const plays = T.plays.filter((p) => !blocked.has(p.channelId));
+  // A video you left almost at once says nothing good about itself: it is not a starting point.
+  const plays = T.plays.filter((p) => !blocked.has(p.channelId) && playWeight(p) > 0);
   // Hearted videos lead: up to three of them per rebuild, and then fewer ordinary plays.
   const hearts = shuffled(T.hearts).slice(0, 3).map((h) => h.videoId);
   let videos = plays.length ? [plays[0].videoId, ...shuffled(plays.slice(1, 15)).slice(0, 2).map((p) => p.videoId)] : [];
@@ -320,21 +321,68 @@ function mixSeeds() {
   const excluded = new Set(T.excluded.map((x) => x.videoId));
   if (videos.length === 0 && T.plays.length === 0 && hearts.length === 0) videos = shuffled([...Q.items.map((it) => it.videoId), ...Object.keys(store.videos)].filter((id) => !excluded.has(id))).slice(0, 3);
   const channels = shuffled(T.pinned).slice(0, 2);
-  const top = channelStats().filter((c) => c.plays > 0 && !blocked.has(c.channelId) && !channels.includes(c.channelId)).slice(0, 8).map((c) => c.channelId);
-  channels.push(...shuffled(top).slice(0, channels.length ? 1 : 2));
+  // Watched channels are drawn by weight: one you watch a lot comes up far more often than one you tried once.
+  const watchedChannels = channelStats().filter((c) => c.score > 0 && !blocked.has(c.channelId) && !channels.includes(c.channelId));
+  channels.push(...weightedPick(watchedChannels, channels.length ? 1 : 2).map((c) => c.channelId));
   const sub = shuffled(T.subs.filter((id) => !channels.includes(id) && !blocked.has(id)))[0];
   if (T.useSubs && sub && channels.length < 4) channels.push(sub);
   return { hearts, videos: [...new Set(videos)], channels, keywords: shuffled(T.keywords).slice(0, 2) };
 }
 /** Every channel this phone knows, most played first: [{ channelId, name, plays, subscribed, pinned, blocked }]. */
+const BAILED_FRACTION = 0.15; // left before this much of the video (and before 2 minutes): counts as "did not like"
+const FINISHED_FRACTION = 0.7;
+/** What one played/queued video is worth: 0 left almost at once, 1 unknown or partly watched, 1.5 watched most of it. */
+function playWeight(p) {
+  if (typeof p.watched !== 'number' || !(p.duration > 0)) return 1; // queued, or the TV never reported it
+  const fraction = p.watched / p.duration;
+  if (fraction < BAILED_FRACTION && p.watched < 120) return 0;
+  return fraction >= FINISHED_FRACTION ? 1.5 : 1;
+}
+/** n distinct items drawn at random, each with a chance proportional to its score. */
+function weightedPick(items, n) {
+  const pool = items.slice();
+  const out = [];
+  while (out.length < n && pool.length) {
+    let r = Math.random() * pool.reduce((sum, c) => sum + c.score, 0);
+    let i = 0;
+    while (i < pool.length - 1 && r >= pool[i].score) { r -= pool[i].score; i += 1; }
+    out.push(pool.splice(i, 1)[0]);
+  }
+  return out;
+}
+/** Every channel this phone knows, heaviest first: [{ channelId, name, plays, score, hidden, subscribed, pinned, blocked }]. */
 function channelStats() {
   const T = store.taste;
   const counts = new Map();
-  for (const p of T.plays) if (p.channelId) counts.set(p.channelId, (counts.get(p.channelId) || 0) + 1);
+  const scores = new Map();
+  for (const p of T.plays) {
+    if (!p.channelId) continue;
+    counts.set(p.channelId, (counts.get(p.channelId) || 0) + 1);
+    scores.set(p.channelId, (scores.get(p.channelId) || 0) + playWeight(p));
+  }
   const ids = new Set([...counts.keys(), ...T.subs, ...T.pinned, ...T.blocked]);
   return [...ids]
-    .map((channelId) => ({ channelId, name: T.names[channelId] || channelId, named: Boolean(T.names[channelId]), avatar: T.avatars[channelId] || '', plays: counts.get(channelId) || 0, subscribed: T.subs.includes(channelId), pinned: T.pinned.includes(channelId), blocked: T.blocked.includes(channelId) }))
-    .sort((x, y) => y.plays - x.plays || x.name.localeCompare(y.name));
+    .map((channelId) => ({ channelId, name: T.names[channelId] || channelId, named: Boolean(T.names[channelId]), avatar: T.avatars[channelId] || '', plays: counts.get(channelId) || 0, score: scores.get(channelId) || 0, hidden: T.hideCounts[channelId] || 0, subscribed: T.subs.includes(channelId), pinned: T.pinned.includes(channelId), blocked: T.blocked.includes(channelId) }))
+    .sort((x, y) => y.score - x.score || y.plays - x.plays || x.name.localeCompare(y.name));
+}
+const HIDES_TO_BLOCK = 5;
+/**
+ * Counts a hidden video against its channel (delta -1 when the hide is undone). At five the
+ * channel is blocked for the active profile; pinned channels are left alone.
+ */
+function countHide(v, delta) {
+  if (!v.channelId) return;
+  const T = store.taste;
+  const n = Math.max(0, (T.hideCounts[v.channelId] || 0) + delta);
+  T.hideCounts[v.channelId] = n;
+  if (v.channel) T.names[v.channelId] = v.channel;
+  store.saveTaste();
+  if (delta > 0 && n >= HIDES_TO_BLOCK && !T.blocked.includes(v.channelId) && !T.pinned.includes(v.channelId)) {
+    if (v.channelAvatar) T.avatars[v.channelId] = v.channelAvatar;
+    setChannelFlag(v.channelId, v.channel, 'blocked', true);
+    debug.log('app', `tune: auto-blocked ${v.channelId} after ${n} hidden videos`);
+    toast(`Blocked ${v.channel || 'that channel'}: you hid ${n} of its videos. Undo in the Tune tab.`, { ms: 6000 });
+  }
 }
 /** False for a pick from a blocked channel, a video marked "don't use", or with a blocked word in its title or channel name. */
 function pickAllowed(v) {
@@ -536,12 +584,14 @@ async function removeRecommendation(v, option) {
   closeSheet();
   const listId = { home: 'feed-list', subs: 'subs-list', search: 'search-list' }[ui.view] || 'feed-list';
   store.hide(v.videoId);
+  countHide(v, 1);
   rerenderList(listId);
   debug.log('app', `removed recommendation ${v.videoId}${option ? ` via "${option.label}"` : ' (local hide)'}`);
   offerUndo({
     text: `${option ? option.label : 'Hidden'}: ${v.title}`,
     revert: () => {
       store.unhide(v.videoId);
+      countHide(v, -1);
       rerenderList(listId);
       debug.log('app', `undo: restored ${v.videoId}`);
     },
@@ -1314,6 +1364,8 @@ remote.addEventListener('ad', (e) => {
   if (ui.npOpen) renderNowPlaying();
 });
 remote.addEventListener('notice', (e) => toast(e.detail.message));
+// How far the TV got in a video; feeds the weights behind MyTube's own picks.
+remote.addEventListener('watched', (e) => store.noteWatched(e.detail.videoId, e.detail.seconds, e.detail.duration));
 
 /** Manual dodge (overlay button): the server does the reload. */
 async function dodgeAd() {
@@ -1835,12 +1887,14 @@ function leftAction(listId) {
 /** Left swipe on a recommendation: hide it for good, and tell YouTube "Not interested" when it offered that. */
 async function dismissVideo(v, listId) {
   store.hide(v.videoId);
+  countHide(v, 1);
   const notInterested = (v.feedback || []).find((f) => /not interested/i.test(f.label));
   debug.log('app', `swiped away ${v.videoId}${notInterested ? ' (+ Not interested, held 10 s)' : ''}`);
   offerUndo({
     text: `Removed: ${v.title}`,
     revert: () => {
       store.unhide(v.videoId);
+      countHide(v, -1);
       rerenderList(listId);
       debug.log('app', `undo: restored ${v.videoId}`);
     },
@@ -2538,7 +2592,7 @@ function profileChips() {
   return el('div', { class: 'profile-chips' }, ...store.profiles.list.map((p) => el('button', { class: `chip${p.id === store.profiles.active ? ' active' : ''}`, onclick: guard(() => useProfile(p.id)) }, p.name)));
 }
 function channelRow(c) {
-  const sub = [c.plays ? `${c.plays} played/queued` : '', c.subscribed ? 'subscribed' : ''].filter(Boolean).join(' · ');
+  const sub = [c.plays ? `${c.plays} played/queued (weight ${c.score % 1 ? c.score.toFixed(1) : c.score})` : '', c.hidden ? `${c.hidden} hidden` : '', c.subscribed ? 'subscribed' : ''].filter(Boolean).join(' · ');
   return el('div', { class: 'tune-row' },
     c.avatar ? el('img', { class: 'tune-avatar', src: c.avatar, alt: '', loading: 'lazy' }) : el('div', { class: 'tune-avatar' }),
     el('button', { class: 'tune-name', onclick: guard(() => openChannel({ channelId: c.channelId, title: c.name })) }, c.named ? c.name : 'Looking up channel…', sub ? el('small', {}, sub) : null),
@@ -2585,13 +2639,19 @@ function dayLabel(at) {
   if (days === 1) return 'Yesterday';
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
+/** "watched 82 %", "left after 0:40 (not used)", or nothing when the TV never reported it. */
+function watchedLabel(p) {
+  if (typeof p.watched !== 'number' || !(p.duration > 0)) return '';
+  const pct = Math.min(100, Math.round((p.watched / p.duration) * 100));
+  return playWeight(p) === 0 ? `left after ${fmtTime(p.watched)} (not used)` : `watched ${pct} %`;
+}
 /** One played / excluded video with its thumbnail and the given action buttons. */
 function videoRow(entry, ...buttons) {
   const known = store.video(entry.videoId);
   const T = store.taste;
   return el('div', { class: 'tune-row' },
     el('img', { class: 'tune-thumb', src: videoThumb(entry.videoId), alt: '', loading: 'lazy' }),
-    el('div', { class: 'tune-name wrap' }, known ? known.title : 'Started on the TV (title not known to this phone)', el('small', {}, entry.channelId ? T.names[entry.channelId] || '' : known ? known.channel : '')),
+    el('div', { class: 'tune-name wrap' }, known ? known.title : 'Started on the TV (title not known to this phone)', el('small', {}, joinMeta(entry.channelId ? T.names[entry.channelId] || '' : known ? known.channel : '', watchedLabel(entry)))),
     el('div', { class: 'tune-btns' }, ...buttons)
   );
 }
@@ -2659,7 +2719,7 @@ function renderTuneView() {
   panels.push(
     el('div', { class: 'panel' },
       el('h3', {}, 'Channels'),
-      el('p', {}, 'Pin: always draw new uploads from it. Block: never show its videos in MyTube picks, and never use it as a starting point. Tap a name to open the channel. To pin or block a channel that is not listed, open any of its videos and use the button in the sheet (block) or play one (it then shows up here).'),
+      el('p', {}, 'Channels you watch more come up more often: each played video adds to the channel\'s weight (more if you watched most of it, nothing if you left almost at once). Hide five videos of a channel and it is blocked automatically. Pin: always draw new uploads from it. Block: never show its videos in MyTube picks, and never use it as a starting point. Tap a name to open the channel. To pin or block a channel that is not listed, open any of its videos and use the button in the sheet (block) or play one (it then shows up here).'),
       pinned.length ? el('div', { class: 'tune-group' }, `Pinned (${pinned.length})`) : null,
       ...pinned.map(channelRow),
       blocked.length ? el('div', { class: 'tune-group' }, `Blocked (${blocked.length})`) : null,
@@ -2691,7 +2751,7 @@ function renderTuneView() {
   panels.push(
     el('div', { class: 'panel' },
       el('h3', {}, 'Videos picks are based on'),
-      el('p', {}, 'What you played or queued here. "Related" picks start from the newest one and two random ones of the latest 15. Don\'t use: moves it to the list below, so it never steers your picks and never shows up as one. Forget: just removes it from here.'),
+      el('p', {}, 'What you played or queued here, with how far the TV got. A video you left in the first 15 % (and first 2 minutes) is not used. "Related" picks start from the newest one and two random ones of the latest 15. Don\'t use: moves it to the list below, so it never steers your picks and never shows up as one. Forget: just removes it from here.'),
       ...(days.length
         ? days.map((day) => {
             const box = el('details', { class: 'tune-day' },
