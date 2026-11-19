@@ -1032,7 +1032,14 @@ $('#mini-play').addEventListener('click', guard(togglePlay));
 $('#mini-next').addEventListener('click', guard(() => remote.next()));
 
 async function togglePlay() {
-  if (!remote.connected) throw new Error('Not connected to the TV. Open the TV tab to connect.');
+  if (!remote.connected) {
+    // Reconnect and then do what was asked, instead of making you go to the TV tab first.
+    if (!store.settings.screen) throw new Error('No TV is linked yet. Open the TV tab to link your Xbox.');
+    toast('Reconnecting to the TV…');
+    debug.log('app', 'play/pause pressed while disconnected: reconnecting first');
+    ui.shutDown = false;
+    await remote.connect();
+  }
   const pl = remote.player;
   if (!pl.videoId) {
     if (Q.items.length === 0) throw new Error('Queue is empty — add a video first');
