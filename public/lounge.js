@@ -446,13 +446,15 @@ export class Remote extends EventTarget {
     return this.send('stopVideo');
   }
   /**
-   * Mute/unmute. When the TV has told us its volume, use setVolume with the
-   * muted flag (iSponsorBlockTV: "YouTube wants the volume when unmuting");
-   * otherwise fall back to the bare mute/unMute commands.
+   * Mute/unmute, always as setVolume with an explicit volume and the muted flag. The Xbox obeys a
+   * bare "mute" but ignores a bare "unMute", and unmuting at volume 0 is still silent; either
+   * left the TV muted with no way back. Unmuting restores the TV's last audible volume, or 100
+   * when that is unknown.
    */
   setMuted(muted) {
-    if (this.player.volume !== null) return this.send('setVolume', { volume: this.player.volume, muted: muted ? 'true' : 'false' });
-    return this.send(muted ? 'mute' : 'unMute');
+    const known = this.player.volume;
+    const volume = muted ? (typeof known === 'number' ? known : 100) : (typeof known === 'number' && known > 0 ? known : 100);
+    return this.send('setVolume', { volume, muted: muted ? 'true' : 'false' });
   }
   setAutoplay(enabled) {
     return this.send('setAutoplayMode', { autoplayMode: enabled ? 'ENABLED' : 'DISABLED' });

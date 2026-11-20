@@ -1401,10 +1401,17 @@ function activeSponsorSegments() {
   return sb.segments.filter((x) => cats.includes(x.category));
 }
 $('#np-mute').addEventListener('click', guard(async () => {
-  const mute = !remote.player.muted;
+  const mute = remote.player.muted !== true;
+  debug.log('app', `mute button: ${mute ? 'mute' : 'unmute'} (TV volume ${remote.player.volume}, muted ${remote.player.muted})`);
   remote.player.muted = mute; // shown at once; the TV's own report confirms or corrects it
   renderNowPlaying();
   await remote.setMuted(mute);
+}));
+// Always sends "unmuted, full volume", whatever state the phone thinks the TV is in.
+$('#np-soundon').addEventListener('click', guard(async () => {
+  debug.log('app', `sound on pressed (TV volume ${remote.player.volume}, muted ${remote.player.muted})`);
+  await remote.send('setVolume', { volume: 100, muted: 'false' });
+  toast('Sent: unmute at full volume');
 }));
 $('#np-autoplay').addEventListener('change', guard((e) => remote.setAutoplay(e.target.checked)));
 $('#np-start').addEventListener('click', guard(() => { const s = Math.max(0, Math.min(Q.currentIndex, Q.items.length - 1)); return pushQueue(s, resumeTimeFor(s)); }));
