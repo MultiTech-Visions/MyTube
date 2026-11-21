@@ -401,7 +401,7 @@ async function refillMix(shown) {
     return;
   }
   const res = await apiMix(seeds);
-  const known = new Set([...shown.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.hidden, ...store.taste.plays.map((p) => p.videoId), ...store.taste.hearts.map((h) => h.videoId), ...Q.items.map((it) => it.videoId)]);
+  const known = new Set([...shown.map((v) => v.videoId), ...MIX.pool.map((v) => v.videoId), ...store.offFeed(), ...store.taste.plays.map((p) => p.videoId), ...store.taste.hearts.map((h) => h.videoId), ...Q.items.map((it) => it.videoId)]);
   const fresh = res.items.filter((v) => !known.has(v.videoId) && pickAllowed(v));
   MIX.pool.push(...fresh);
   if (fresh.length === 0) MIX.dry = true;
@@ -458,7 +458,7 @@ async function feedPage({ reset, freshBatch }) {
       return [];
     }
     if (pct === 100) return [];
-    const known = new Set([...shown.map((v) => v.videoId), ...store.hidden]);
+    const known = new Set([...shown.map((v) => v.videoId), ...store.offFeed()]);
     return res.items.filter((v) => !known.has(v.videoId));
   };
   // Both at once on a fresh load; later pages only refill the pool when it runs low.
@@ -564,6 +564,7 @@ function openSheet(v) {
   // when the item came with them, plus a local hide that always works.
   const fromHome = ui.view === 'home';
   const opts = (v.feedback || []).map((f) => el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, f)) }, el('span', { class: 'ico', html: icon('hide') }), f.label));
+  opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => markWatched(v)) }, el('span', { class: 'ico', html: icon('check') }), 'Already watched'));
   if (fromHome) opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, null)) }, el('span', { class: 'ico', html: icon('hide') }), 'Hide from my feed'));
   for (const pr of store.profiles.list) {
     const on = isHearted(pr.id, v.videoId);
@@ -577,6 +578,34 @@ function openSheet(v) {
   $('#sheet-feedback').replaceChildren(...opts);
   $('#sheet').hidden = false;
   $('#sheet-backdrop').hidden = false;
+}
+
+/**
+ * "Already watched": takes the video off Home, Subs and Search for good and records it as a
+ * video you watched in full for the active profile (a good sign for its channel, a starting
+ * point for picks). Unlike hiding, it does not count against the channel.
+ */
+function markWatched(v) {
+  closeSheet();
+  const listId = { home: 'feed-list', subs: 'subs-list', search: 'search-list' }[ui.view] || 'feed-list';
+  const wasPlayed = store.taste.plays.some((p) => p.videoId === v.videoId);
+  store.markSeen(v.videoId);
+  store.rememberVideo(v);
+  store.recordPlay(v.videoId, v.channelId ? v.channelId : null, v.channel ? v.channel : null, v.channelAvatar ? v.channelAvatar : null);
+  store.noteWatched(v.videoId, 1, 1); // 1 of 1: watched in full
+  rerenderList(listId);
+  debug.log('app', `marked already watched: ${v.videoId}`);
+  offerUndo({
+    text: `Already watched: ${v.title}`,
+    revert: () => {
+      store.unmarkSeen(v.videoId);
+      if (!wasPlayed) { store.taste.plays = store.taste.plays.filter((p) => p.videoId !== v.videoId); store.saveTaste(); }
+      rerenderList(listId);
+      debug.log('app', `undo: ${v.videoId} no longer marked watched`);
+    },
+    commit: null,
+    commitLabel: null,
+  });
 }
 
 /** Hides the video locally at once (persisted), then tells YouTube when a token is available. */
@@ -604,7 +633,7 @@ async function removeRecommendation(v, option) {
 function rerenderList(listId) {
   if (listId === 'feed-list') renderFeedList();
   else if (listId === 'subs-list') renderSubs();
-  else if (listId === 'search-list') renderList($('#search-list'), ui.search.items.filter((v) => !store.hidden.includes(v.videoId)));
+  else if (listId === 'search-list') renderList($('#search-list'), ui.search.items.filter((v) => !store.offFeed().includes(v.videoId)));
   else if (listId === 'np-related') renderRelated();
   else if (listId === 'chan-list') renderChannelList();
   else if (listId === 'library-list') renderLibrary();
@@ -662,7 +691,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') commitPending('app hidden', { keepalive: true });
 });
 function visibleFeed() {
-  const hidden = new Set(store.hidden);
+  const hidden = new Set(store.offFeed());
   return ui.feed.items.filter((v) => !hidden.has(v.videoId));
 }
 function closeSheet() {
@@ -2217,7 +2246,7 @@ function renderSubs() {
     if (SUBS.channel.avatar) $('#subs-head-avatar').src = SUBS.channel.avatar;
     $('#subs-head-title').textContent = SUBS.channel.title;
   }
-  const hiddenSubs = new Set(store.hidden);
+  const hiddenSubs = new Set(store.offFeed());
   renderList($('#subs-list'), SUBS.items.filter((v) => !hiddenSubs.has(v.videoId)));
   if (SUBS.loaded && SUBS.items.length === 0) $('#subs-list').replaceChildren(el('p', { class: 'empty' }, 'No videos.'));
 }
@@ -2802,7 +2831,9 @@ function renderTuneView() {
     el('div', { class: 'panel' },
       el('h3', {}, 'Hidden videos and reset'),
       el('div', { class: 'kv' }, 'Videos you swiped away or hid', el('b', {}, String(store.hidden.length))),
+      el('div', { class: 'kv' }, 'Videos you marked already watched', el('b', {}, String(store.seen.length))),
       el('div', { class: 'row' },
+        el('button', { class: 'btn ghost small', disabled: store.seen.length === 0, onclick: () => { if (!confirm(`Let all ${store.seen.length} videos marked already watched show up again?`)) return; for (const id of store.seen.slice()) store.unmarkSeen(id); debug.log('app', 'tune: cleared already-watched marks'); renderTuneView(); } }, 'Clear watched marks'),
         el('button', { class: 'btn ghost small', disabled: store.hidden.length === 0, onclick: () => { if (!confirm(`Let all ${store.hidden.length} hidden videos show up again?`)) return; for (const id of store.hidden.slice()) store.unhide(id); debug.log('app', 'tune: unhid all videos'); renderTuneView(); } }, 'Unhide all'),
         el('button', { class: 'btn ghost small danger', onclick: () => { if (!confirm('Erase everything on this page: watched videos, the excluded-videos list, discovered channels, pins, blocks and keywords?')) return; store.resetTaste(); MIX.pool = []; debug.log('app', 'tune: reset everything'); renderTuneView(); } }, 'Reset everything here')
       )
