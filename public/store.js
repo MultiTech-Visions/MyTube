@@ -4,7 +4,7 @@
  * erase them. Corrupt JSON throws on purpose; only a missing key gets its
  * initial value.
  */
-const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos', taste: 'mytube.taste', profiles: 'mytube.profiles' };
+const KEYS = { hidden: 'mytube.hidden', settings: 'mytube.settings', queue: 'mytube.queue', lastKnown: 'mytube.lastKnown', deviceId: 'mytube.deviceId', videos: 'mytube.videos', taste: 'mytube.taste', seen: 'mytube.seen', profiles: 'mytube.profiles' };
 
 function load(key, initial) {
   const raw = localStorage.getItem(key);
@@ -239,6 +239,28 @@ export const store = {
     if (i === -1) return;
     this.hidden.splice(i, 1);
     save(KEYS.hidden, this.hidden);
+  },
+
+  /**
+   * Videos you marked "already watched": kept off Home, Subs and Search like hidden ones, but
+   * not a negative signal (no hide count against the channel). One list for all profiles.
+   */
+  seen: load(KEYS.seen, []),
+  markSeen(videoId) {
+    if (this.seen.includes(videoId)) return;
+    this.seen.push(videoId);
+    if (this.seen.length > 5000) this.seen.splice(0, this.seen.length - 5000);
+    save(KEYS.seen, this.seen);
+  },
+  unmarkSeen(videoId) {
+    const i = this.seen.indexOf(videoId);
+    if (i === -1) return;
+    this.seen.splice(i, 1);
+    save(KEYS.seen, this.seen);
+  },
+  /** Every video that must not be listed as a suggestion: hidden or already watched. */
+  offFeed() {
+    return [...this.hidden, ...this.seen];
   },
 
   clearAll() {
