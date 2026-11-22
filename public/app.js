@@ -1005,14 +1005,37 @@ function syncCurrentFromTv() {
     }
     return;
   }
-  // Something we did not queue is playing (autoplay or picked on the TV). Keep it in the list so the history is visible.
-  debug.log('app', `TV is playing ${pl.videoId}, which is not in the local queue; inserting it`, { tvQueue: remote.tvQueue });
-  const known = store.video(pl.videoId);
-  const item = known ? { ...known } : { videoId: pl.videoId, title: 'Loading…', channel: '', duration: '', thumbnail: `https://i.ytimg.com/vi/${pl.videoId}/mqdefault.jpg` };
-  item.fromTv = true;
-  Q.currentIndex = insertAfterCurrent(item);
-  saveQueue();
+  // Something we did not queue is on the TV (autoplay, or picked with the controller). It is added
+  // to the list only once it has really been playing for a few seconds: on (re)connect and on a
+  // reload the Xbox briefly reports a video it remembers from earlier (its home-screen preview,
+  // for one), and adding that at once put a video nobody chose into the queue again and again.
+  const videoId = pl.videoId;
+  clearTimeout(foreignTimer);
+  foreignTimer = setTimeout(() => {
+    const now = remote.player;
+    const settled = now.videoId === videoId && !remote.ad.active && (now.state === PLAYER_STATE.PLAYING || now.state === PLAYER_STATE.PAUSED) && remote.estimatedTime() >= FOREIGN_MIN_SECONDS;
+    if (!settled) {
+      debug.log('app', `TV showed ${videoId} (not in the queue) only briefly; not adding it`, { nowOnTv: now.videoId, state: now.state });
+      return;
+    }
+    if (Q.items.some((it) => it.videoId === videoId)) return;
+    debug.log('app', `TV is playing ${videoId}, which is not in the local queue; inserting it`, { tvQueue: remote.tvQueue });
+    recordTvPlay(videoId);
+    const known = store.video(videoId);
+    const item = known ? { ...known } : { videoId, title: 'Loading…', channel: '', duration: '', thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` };
+    item.fromTv = true;
+    Q.currentIndex = insertAfterCurrent(item);
+    saveQueue();
+    renderQueue();
+  }, FOREIGN_WAIT_MS);
 }
+function recordTvPlay(videoId) {
+  const known = store.video(videoId);
+  store.recordPlay(videoId, known && known.channelId ? known.channelId : null, known && known.channel ? known.channel : null, known && known.channelAvatar ? known.channelAvatar : null);
+}
+const FOREIGN_WAIT_MS = 6000;
+const FOREIGN_MIN_SECONDS = 3;
+let foreignTimer = null;
 
 function rememberPosition() {
   const pl = remote.player;
@@ -2341,8 +2364,9 @@ remote.addEventListener('player', () => {
     ui.descOpen = false;
     resetAdRun(pl.videoId);
     if (pl.videoId) {
-      const known = store.video(pl.videoId);
-      store.recordPlay(pl.videoId, known && known.channelId ? known.channelId : null, known && known.channel ? known.channel : null, known && known.channelAvatar ? known.channelAvatar : null);
+      // A video from the queue counts as played now; one the TV came up with by itself only once
+      // it has really played (syncCurrentFromTv), so a brief flash never steers your picks.
+      if (Q.items.some((it) => it.videoId === pl.videoId)) recordTvPlay(pl.videoId);
       syncCurrentFromTv();
       loadWatch(pl.videoId).catch(showError);
       if (ADS().sponsorBlock) loadSponsorSegments(pl.videoId).catch(showError);
