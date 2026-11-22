@@ -564,6 +564,7 @@ function openSheet(v) {
   // when the item came with them, plus a local hide that always works.
   const fromHome = ui.view === 'home';
   const opts = (v.feedback || []).map((f) => el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, f)) }, el('span', { class: 'ico', html: icon('hide') }), f.label));
+  opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(async () => { await shareVideo(v.videoId); closeSheet(); }) }, el('span', { class: 'ico', html: icon('share') }), 'Share (copy link)'));
   opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => markWatched(v)) }, el('span', { class: 'ico', html: icon('check') }), 'Already watched'));
   if (fromHome) opts.push(el('button', { class: 'btn action small-action', type: 'button', onclick: guard(() => removeRecommendation(v, null)) }, el('span', { class: 'ico', html: icon('hide') }), 'Hide from my feed'));
   for (const pr of store.profiles.list) {
@@ -1188,6 +1189,17 @@ $('#np-heart').addEventListener('click', guard(() => {
   toggleHeart(store.profiles.active, known ? known : { videoId });
 }));
 $('#np-dislike').addEventListener('click', guard(() => setRating('dislike')));
+/** Copies the video's YouTube link to the clipboard. */
+async function shareVideo(videoId) {
+  const url = `https://youtu.be/${videoId}`;
+  await navigator.clipboard.writeText(url);
+  debug.log('app', `copied link ${url}`);
+  toast(`Link copied: ${url}`);
+}
+$('#np-share').addEventListener('click', guard(() => {
+  if (!remote.player.videoId) throw new Error('Nothing is playing');
+  return shareVideo(remote.player.videoId);
+}));
 $('#np-save').addEventListener('click', guard(() => {
   const vid = remote.player.videoId;
   const data = vid && ui.watch.videoId === vid ? ui.watch.data : null;
